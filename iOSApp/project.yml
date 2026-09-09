@@ -1,0 +1,30 @@
+name: DachmanDroneDirector
+options:
+  bundleIdPrefix: cz.dachman
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  DachmanFlightCore:
+    path: ..
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+targets:
+  DachmanDroneDirector:
+    type: application
+    platform: iOS
+    sources:
+      - path: DachmanDroneDirector
+    info:
+      path: DachmanDroneDirector/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cz.dachman.drone.director
+        PRODUCT_NAME: Dachman Drone Director
+        SWIFT_OBJC_BRIDGING_HEADER: DachmanDroneDirector/DJI/DachmanDroneDirector-Bridging-Header.h
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+    dependencies:
+      - package: DachmanFlightCore

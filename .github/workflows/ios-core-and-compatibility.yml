@@ -1,0 +1,45 @@
+name: iOS core and DJI compatibility
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  core-tests:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Test shared flight core
+        run: swift test
+
+  dji-device-build-spike:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 26.6
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+      - name: Toolchain info
+        run: xcodebuild -version
+      - name: Install XcodeGen and CocoaPods
+        run: brew install xcodegen cocoapods
+      - name: Generate Xcode project
+        working-directory: iOSApp
+        run: xcodegen generate
+      - name: Install DJI SDK
+        working-directory: iOSApp
+        run: pod install --repo-update
+      - name: Generic device compatibility build
+        working-directory: iOSApp
+        run: |
+          xcodebuild \
+            -workspace DachmanDroneDirector.xcworkspace \
+            -scheme DachmanDroneDirector \
+            -configuration Debug \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
