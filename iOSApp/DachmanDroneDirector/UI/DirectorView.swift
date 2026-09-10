@@ -4,11 +4,23 @@ import DachmanFlightCore
 struct DirectorView: View {
     @StateObject private var vm = DirectorViewModel()
     @StateObject private var voice = VoiceDirector()
+    @State private var showDJIStatus = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
+                    // DJI Status Button
+                    Button(action: { showDJIStatus.toggle() }) {
+                        Label("DJI Connection Status", systemImage: "antenna.radiowaves.left.and.right")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    
+                    if showDJIStatus {
+                        DJIStatusView()
+                    }
+                    
                     ZStack {
                         RoundedRectangle(cornerRadius: 18).fill(.black)
                             .frame(height: 280)
@@ -86,4 +98,8 @@ private struct WorkerOverlay: View {
         }
         .foregroundStyle(selected ? .green : .yellow)
     }
+}
+
+#Preview {
+    DirectorView()
 }
