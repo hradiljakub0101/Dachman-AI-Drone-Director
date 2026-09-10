@@ -30,8 +30,13 @@ struct DirectorView: View {
                         HStack {
                             Button(vm.selected.contains(worker.id) ? "✓ \(worker.id)" : worker.id) { vm.toggle(worker.id) }
                                 .buttonStyle(.bordered)
-                            Button("PRIMARY") { vm.setPrimary(worker.id) }
-                                .buttonStyle(vm.primary == worker.id ? .borderedProminent : .bordered)
+                            if vm.primary == worker.id {
+                                Button("PRIMARY") { vm.setPrimary(worker.id) }
+                                    .buttonStyle(.borderedProminent)
+                            } else {
+                                Button("PRIMARY") { vm.setPrimary(worker.id) }
+                                    .buttonStyle(.bordered)
+                            }
                             Spacer()
                             Text(String(format: "%.0f %%", worker.confidence * 100)).font(.caption)
                         }
