@@ -53,9 +53,9 @@ klíčem. Ten není distribuční identita: CI debug klíč se může mezi běhy
 Bez DJI klíče lze DJI variantu sestavit pro CI, ale registrace dronu bude zablokována.
 
 Pro ruční CI build s tvým klíčem přidej v GitHub Settings > Secrets and variables > Actions
-repository secret `DJI_ANDROID_APP_KEY`. Po začlenění workflow do hlavní větve spusť
-`Android APK and approval tests` přes Run workflow a zapni `use_dji_key`.
-Klíč bude vložen do APK. Automatické push/PR kontroly jej nikdy nepoužívají.
+repository secret `DJI_ANDROID_APP_KEY` a spusť `Android APK and approval tests` přes Run
+workflow se zapnutým `use_dji_key`. Po merge do chráněné větve `main` se klíčový debug APK
+sestaví automaticky; pull-request kontroly zůstávají bez klíče.
 
 Pro Release připravte vlastní dlouhodobý keystore v Android Studiu (Generate Signed
 Bundle / APK). Pokud již aplikaci distribuujete, použijte její existující podpis.
