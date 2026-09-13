@@ -17,7 +17,8 @@ Pozdní callback nesmí schválit jiný záměr. Neúspěch nebo nedostupná aut
 
 `DJI_ANDROID_APP_KEY -> Gradle manifest placeholder -> com.dji.sdk.API_KEY -> registerApp callback`
 
-Demo varianta nemá SDK ani jeho oprávnění. DJI varianta umí registraci a připojení pro diagnostiku.
+Demo varianta nemá SDK ani jeho oprávnění. DJI varianta je plná letová aplikace pro
+registraci, živý obraz, telemetrii, potvrzené akce a bezpečnostně omezené Virtual Stick řízení.
 Oprávnění Androidu vyžaduje až při připojování, registrace bez nich neproběhne.
 
 `Výběr akce -> animovaný náhled / bezpečnostní checklist -> BiometricPrompt -> jednorázový ApprovalGate -> živá telemetrie -> DJI příkaz`
@@ -34,7 +35,7 @@ může projít. Nejde o ověření osobní identity jmenovaného pilota ani opr�
 Registrace uživatelských účtů, OAuth přihlášení, role, backend, refresh tokeny a serverové
 odvolávání účtů nejsou implementované. Přihlášení GitHub konektoru slouží k vývoji, nikoli
 k autentizaci uživatelů mobilní aplikace. DJI aktivace/binding účtu je samostatný SDK proces,
-který tento prototyp zatím neimplementuje; diagnostika připojení ho nenahrazuje.
+který tento klient nepřebírá: aktivace a binding zůstávají samostatným procesem DJI SDK.
 
 ## Omezení řízení
 
