@@ -1,0 +1,41 @@
+name: Android APK and approval tests
+on:
+  workflow_dispatch:
+    inputs:
+      use_dji_key:
+        description: 'Build DJI debug APK using saved DJI_ANDROID_APP_KEY (embedded in APK)'
+        type: boolean
+        default: false
+  push:
+    branches: [main, 'fix/**']
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Test and build demo and DJI debug APKs
+        working-directory: androidApp
+        env:
+          DJI_ANDROID_APP_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.use_dji_key && secrets.DJI_ANDROID_APP_KEY || '' }}
+        run: gradle testDemoDebugUnitTest assembleDemoDebug assembleDjiDebug
+      - name: Verify configured DJI key in APK and APK signature
+        if: github.event_name == 'workflow_dispatch' && inputs.use_dji_key
+        env:
+          DJI_ANDROID_APP_KEY: ${{ secrets.DJI_ANDROID_APP_KEY }}
+        run: python3 scripts/verify_android_apk.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apks
+          path: androidApp/app/build/outputs/apk/*/debug/*.apk
+          if-no-files-found: error

@@ -34,7 +34,7 @@ Fyzický pohyb kniplu má vyvolat vypnutí Virtual Stick. Tuto funkci je nutné 
 1. Nainstaluj Xcode 26 nebo novější.
 2. Přihlas Apple ID do Xcode.
 3. V DJI Developer portálu vytvoř iOS App Key pro Bundle ID `cz.dachman.drone.director`.
-4. Nahraď `__DJI_APP_KEY__` v `iOSApp/DachmanDroneDirector/Info.plist`.
+4. Nastav `DJI_APP_KEY` v prostředí sestavení podle `DEVICE_SIGNING_GUIDE.md`; zdrojový plist neupravuj.
 5. V kořeni projektu spusť `./scripts/bootstrap_macos.sh`.
 6. Otevři `iOSApp/DachmanDroneDirector.xcworkspace`.
 7. Vyber svůj iPhone jako zařízení a nastav Signing Team.
@@ -59,3 +59,13 @@ Pořadí zůstává záměrně konzervativní:
 Projekt používá `DJI-SDK-iOS 4.16.2` přes CocoaPods. DJI pro USB/MFi připojení vyžaduje external accessory protokoly `com.dji.video`, `com.dji.protocol`, `com.dji.common`. DJI dokumentace pro MSDK 4 také uvádí ATS `NSAllowsArbitraryLoads`; pro produkci jej později zúžíme, pokud kompatibilita dovolí.
 
 Protože DJI iOS MSDK 4.16.2 je stará binární knihovna, první důležitý milník je compatibility build s Xcode 26. Projekt obsahuje GitHub Actions job právě pro tento účel.
+
+## Android a ověření pilota
+
+V `androidApp` je Android prototyp se schválením manévru systémovou biometrií/kódem,
+demo APK a samostatnou diagnostickou DJI variantou. Detaily sestavení a podpisů jsou
+v [DEVICE_SIGNING_GUIDE.md](DEVICE_SIGNING_GUIDE.md).
+
+Současný rozsah, datový tok a omezení identity pilota jsou popsány v
+[docs/AUTHENTICATION_CZ.md](docs/AUTHENTICATION_CZ.md). Android zatím nepřebírá
+Vision/hlas ani Swift flight-core. iOS i Android zůstávají v simulaci manévrů.

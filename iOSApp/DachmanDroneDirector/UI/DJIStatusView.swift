@@ -27,10 +27,10 @@ final class DJIStatusViewModel: ObservableObject {
     }
     
     private func updateConnectionStatus(from status: String) {
-        if status.lowercased().contains("connected") {
-            connectionStatus = "✓ Connected"
-        } else if status.lowercased().contains("disconnected") {
+        if status.lowercased().contains("disconnected") {
             connectionStatus = "✗ Disconnected"
+        } else if status.lowercased().contains("connected") {
+            connectionStatus = "✓ Connected"
         } else if status.lowercased().contains("registering") || status.lowercased().contains("connecting") {
             connectionStatus = "⟳ Connecting..."
         } else {
@@ -39,7 +39,7 @@ final class DJIStatusViewModel: ObservableObject {
     }
     
     func initializeDJI() {
-        let appKey = DJIConfigManager.getAppKey()
+        let appKey = DJIConfig.loadAppKey()
         if appKey == nil || appKey?.isEmpty ?? true {
             djiStatus = "DJI SDK: App Key not configured"
             appKeyStatus = "App Key: ⚠ Missing - cannot initialize"
@@ -72,8 +72,7 @@ struct DJIStatusView: View {
                     HStack(spacing: 8) {
                         Text(vm.isSimulationMode ? "🎮 Simulation" : "🚁 Live")
                             .font(.caption)
-                        Toggle("", isOn: $vm.isSimulationMode)
-                            .labelsHidden()
+                        Text("Živé řízení není zapojeno").font(.caption2)
                     }
                 }
                 

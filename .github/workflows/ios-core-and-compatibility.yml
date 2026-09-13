@@ -1,46 +1,31 @@
 name: iOS core and DJI compatibility
-
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [main, 'fix/**']
   pull_request:
-
+permissions:
+  contents: read
 jobs:
   core-tests:
-    runs-on: macos-26
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - name: Swift version
-        run: swift --version
-      - name: Test shared flight core
-        run: swift test
-
+      - run: swift test
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py'
   dji-device-build-spike:
-    runs-on: macos-26
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - name: Select Xcode 26.6
-        run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
-      - name: Toolchain info
-        run: xcodebuild -version
-      - name: Install XcodeGen and CocoaPods
-        run: brew install xcodegen cocoapods
-      - name: Generate Xcode project
+      - run: xcodebuild -version
+      - run: brew install xcodegen cocoapods
+      - run: xcodegen generate
         working-directory: iOSApp
-        run: xcodegen generate
-      - name: Install DJI SDK
+      - run: pod install --repo-update
         working-directory: iOSApp
-        run: pod install --repo-update
-      - name: Generic device compatibility build
+      - name: Unsigned device compatibility build (not a distributable IPA)
         working-directory: iOSApp
-        run: |
-          xcodebuild \
-            -workspace DachmanDroneDirector.xcworkspace \
-            -scheme DachmanDroneDirector \
-            -configuration Debug \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            CODE_SIGNING_ALLOWED=NO \
-            build
-.
+        run: >-
+          xcodebuild -workspace DachmanDroneDirector.xcworkspace
+          -scheme DachmanDroneDirector -configuration Debug -sdk iphoneos
+          -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build

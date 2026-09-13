@@ -26,5 +26,12 @@ targets:
         PRODUCT_NAME: Dachman Drone Director
         SWIFT_OBJC_BRIDGING_HEADER: DachmanDroneDirector/DJI/DachmanDroneDirector-Bridging-Header.h
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+    postBuildScripts:
+      - name: Inject DJI key into processed plist
+        showEnvVars: false
+        script: python3 "$SRCROOT/../scripts/inject_dji_key.py"
+        inputFiles:
+          - "$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)"
+        basedOnDependencyAnalysis: false
     dependencies:
       - package: DachmanFlightCore

@@ -1,0 +1,63 @@
+plugins { id 'com.android.application' }
+
+def djiKey = providers.environmentVariable('DJI_ANDROID_APP_KEY').orElse('').get().trim()
+def validDjiKey = !djiKey.isEmpty() && !djiKey.contains('__') && !djiKey.contains('$(') && !djiKey.toLowerCase().contains('placeholder')
+def signingNames = ['ANDROID_KEYSTORE_PATH', 'ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEY_ALIAS', 'ANDROID_KEY_PASSWORD']
+def hasSigning = signingNames.every { System.getenv(it)?.trim() }
+
+android {
+    namespace 'cz.dachman.drone.director'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'cz.dachman.drone.director'
+        minSdk 30
+        targetSdk 34
+        versionCode 1
+        versionName '0.2.0'
+        manifestPlaceholders = [djiAppKey: validDjiKey ? djiKey : '__DJI_APP_KEY__']
+    }
+    flavorDimensions += 'connection'
+    productFlavors {
+        demo { dimension 'connection'; applicationIdSuffix '.demo' }
+        dji { dimension 'connection'; ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' } }
+    }
+    signingConfigs {
+        release {
+            if (hasSigning) {
+                storeFile file(System.getenv('ANDROID_KEYSTORE_PATH'))
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+            shrinkResources false
+        }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    packaging {
+        jniLibs { useLegacyPackaging = true; keepDebugSymbols += ['**/*.so'] }
+        resources { excludes += ['META-INF/rxjava.properties'] }
+    }
+}
+
+tasks.configureEach { task ->
+    if (task.name == 'preDjiReleaseBuild') {
+        task.doFirst { if (!validDjiKey) throw new GradleException('DJI_ANDROID_APP_KEY is required for DJI Release') }
+    }
+    if (task.name == 'preDjiReleaseBuild' || task.name == 'preDemoReleaseBuild') {
+        task.doFirst { if (!hasSigning) throw new GradleException('Release requires all four ANDROID signing environment variables') }
+    }
+}
+dependencies {
+    djiImplementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
+    djiImplementation 'androidx.appcompat:appcompat:1.7.0'
+    djiImplementation 'androidx.constraintlayout:constraintlayout:2.2.0'
+    djiImplementation('com.dji:dji-sdk:4.18') { exclude module: 'library-anti-distortion' }
+    djiCompileOnly 'com.dji:dji-sdk-provided:4.18'
+    testImplementation 'junit:junit:4.13.2'
+}

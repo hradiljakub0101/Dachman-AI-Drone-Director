@@ -2,6 +2,7 @@ import SwiftUI
 import DachmanFlightCore
 
 struct DirectorView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var vm = DirectorViewModel()
     @StateObject private var voice = VoiceDirector()
     @State private var showDJIStatus = false
@@ -63,7 +64,7 @@ struct DirectorView: View {
                         VStack(spacing: 8) {
                             Text("TRAJECTORY REVIEW").font(.headline)
                             Text(pending)
-                            Button("APPROVE") { vm.approve() }.buttonStyle(.borderedProminent)
+                            Button(vm.isAuthenticating ? "OVĚŘOVÁNÍ…" : "OVĚŘIT A SCHVÁLIT") { vm.approve() }.buttonStyle(.borderedProminent).disabled(vm.isAuthenticating)
                         }
                         .padding().background(.thinMaterial).clipShape(RoundedRectangle(cornerRadius: 16))
                     }
@@ -83,6 +84,9 @@ struct DirectorView: View {
                 .padding()
             }
             .navigationTitle("Dachman AI Drone Director")
+            .onChange(of: scenePhase) { phase in
+                if phase == .background { vm.suspend(); voice.stop() }
+            }
         }
     }
 }

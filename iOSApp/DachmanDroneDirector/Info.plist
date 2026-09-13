@@ -9,6 +9,7 @@
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>UILaunchScreen</key><dict/>
+    <key>NSFaceIDUsageDescription</key><string>Ověření držitele zařízení před schválením manévru.</string>
     <key>NSMicrophoneUsageDescription</key><string>Hlasové povely pro režiséra letu.</string>
     <key>NSSpeechRecognitionUsageDescription</key><string>Převod českých hlasových povelů na bezpečné filmové manévry.</string>
     <key>NSLocationWhenInUseUsageDescription</key><string>Poloha je používána pro telemetrii a bezpečnost letu.</string>
