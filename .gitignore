@@ -15,5 +15,7 @@ local.properties
 *.ipa
 *.apk
 *.aab
+/build-artifact/
+/build-deps/
 __pycache__/
 .DS_Store
