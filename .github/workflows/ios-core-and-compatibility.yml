@@ -1,11 +1,14 @@
-name: iOS core and DJI compatibility
+name: iOS core, DJI compatibility and unsigned IPA
+
 on:
   workflow_dispatch:
   push:
     branches: [main, 'fix/**']
   pull_request:
+
 permissions:
   contents: read
+
 jobs:
   core-tests:
     runs-on: macos-15
@@ -13,7 +16,9 @@ jobs:
       - uses: actions/checkout@v4
       - run: swift test
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
-  dji-device-build-spike:
+
+  dji-device-build-compatibility:
+    name: iOS DJI compatibility build
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -23,9 +28,134 @@ jobs:
         working-directory: iOSApp
       - run: pod install --repo-update
         working-directory: iOSApp
-      - name: Unsigned device compatibility build (not a distributable IPA)
+      - name: Unsigned device compatibility build
         working-directory: iOSApp
         run: >-
           xcodebuild -workspace DachmanDroneDirector.xcworkspace
           -scheme DachmanDroneDirector -configuration Debug -sdk iphoneos
-          -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
+          -destination 'generic/platform=iOS'
+          -derivedDataPath build/DerivedData
+          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+
+  unsigned-ipa:
+    name: Unsigned IPA for SideStore
+    needs: core-tests
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: xcodebuild -version
+      - run: brew install xcodegen cocoapods
+      - run: xcodegen generate
+        working-directory: iOSApp
+      - run: pod install --repo-update
+        working-directory: iOSApp
+
+      - name: Verify DJI App Key is available
+        env:
+          DJI_APP_KEY: ${{ secrets.IOS_DJI_APP_KEY }}
+        shell: bash
+        run: |
+          if [[ -z "${DJI_APP_KEY:-}" ]]; then
+            echo "::error::GitHub Secret IOS_DJI_APP_KEY is missing."
+            exit 1
+          fi
+          echo "DJI App Key is available; its value is not printed."
+
+      - name: Archive unsigned iOS device build
+        working-directory: iOSApp
+        env:
+          DJI_APP_KEY: ${{ secrets.IOS_DJI_APP_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -workspace DachmanDroneDirector.xcworkspace \
+            -scheme DachmanDroneDirector \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            -archivePath build/DachmanDroneDirector.xcarchive \
+            PRODUCT_BUNDLE_IDENTIFIER=cz.dachman.drone.director \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            SKIP_INSTALL=NO \
+            archive
+
+      - name: Validate archived app metadata
+        working-directory: iOSApp
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path=""
+          for candidate in build/DachmanDroneDirector.xcarchive/Products/Applications/*.app; do
+            if [[ -d "$candidate" ]]; then
+              app_path="$candidate"
+              break
+            fi
+          done
+          if [[ -z "$app_path" || ! -f "$app_path/Info.plist" ]]; then
+            echo "::error::Archived .app bundle was not found."
+            exit 1
+          fi
+          python3 - "$app_path/Info.plist" <<'PY'
+          import plistlib
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          with path.open("rb") as stream:
+              data = plistlib.load(stream)
+
+          bundle_id = data.get("CFBundleIdentifier")
+          app_key = data.get("DJISDKAppKey")
+          if bundle_id != "cz.dachman.drone.director":
+              raise SystemExit("Archived Bundle ID does not match cz.dachman.drone.director")
+          if (
+              not isinstance(app_key, str)
+              or not app_key.strip()
+              or "__" in app_key
+              or "$(" in app_key
+              or "placeholder" in app_key.lower()
+          ):
+              raise SystemExit("Archived Info.plist does not contain a valid DJI App Key")
+          print("Archived app metadata validated; Bundle ID and DJI App Key are present.")
+          PY
+
+      - name: Package unsigned IPA
+        working-directory: iOSApp
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path=""
+          for candidate in build/DachmanDroneDirector.xcarchive/Products/Applications/*.app; do
+            if [[ -d "$candidate" ]]; then
+              app_path="$candidate"
+              break
+            fi
+          done
+          if [[ -z "$app_path" ]]; then
+            echo "::error::Cannot package IPA because the archived .app bundle was not found."
+            exit 1
+          fi
+          rm -rf build/ipa
+          rm -f build/DachmanDroneDirector-unsigned.ipa build/DachmanDroneDirector-unsigned.ipa.sha256
+          mkdir -p build/ipa/Payload
+          ditto "$app_path" "build/ipa/Payload/$(basename "$app_path")"
+          (cd build/ipa && /usr/bin/zip -qry ../DachmanDroneDirector-unsigned.ipa Payload)
+          test -s build/DachmanDroneDirector-unsigned.ipa
+          unzip -l build/DachmanDroneDirector-unsigned.ipa | grep -Eq 'Payload/[^/]+\.app/Info\.plist'
+          shasum -a 256 build/DachmanDroneDirector-unsigned.ipa > build/DachmanDroneDirector-unsigned.ipa.sha256
+          echo "Unsigned IPA packaged successfully."
+
+      - name: Upload unsigned IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DachmanDroneDirector-unsigned-ipa
+          path: |
+            iOSApp/build/DachmanDroneDirector-unsigned.ipa
+            iOSApp/build/DachmanDroneDirector-unsigned.ipa.sha256
+          if-no-files-found: error
+          retention-days: 14
