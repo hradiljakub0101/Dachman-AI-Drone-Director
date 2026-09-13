@@ -4,6 +4,34 @@ def djiKey = providers.environmentVariable('DJI_ANDROID_APP_KEY').orElse('').get
 def validDjiKey = !djiKey.isEmpty() && !djiKey.contains('__') && !djiKey.contains('$(') && !djiKey.toLowerCase().contains('placeholder')
 def signingNames = ['ANDROID_KEYSTORE_PATH', 'ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEY_ALIAS', 'ANDROID_KEY_PASSWORD']
 def hasSigning = signingNames.every { System.getenv(it)?.trim() }
+def detectorModelUrl = 'https://storage.googleapis.com/download.tensorflow.org/models/tflite/task_library/object_detection/android/lite-model_efficientdet_lite0_detection_metadata_1.tflite'
+def detectorModelSha256 = '2e04c53bfeac0ac2a30c057c7e2a777594ce39baaac35a92f74fb1e8c4fc4e0b'
+def generatedModelDirectory = layout.buildDirectory.dir('generated/dachmanDetectorAssets')
+def generatedModelFile = generatedModelDirectory.map { it.file('efficientdet-lite0.tflite') }
+
+def prepareObjectDetectionModel = tasks.register('prepareObjectDetectionModel') {
+    inputs.property('modelUrl', detectorModelUrl)
+    inputs.property('modelSha256', detectorModelSha256)
+    outputs.file(generatedModelFile)
+    doLast {
+        File destination = generatedModelFile.get().asFile
+        destination.parentFile.mkdirs()
+        File temporary = new File(destination.parentFile, destination.name + '.download')
+        new java.net.URI(detectorModelUrl).toURL().openStream().withCloseable { input ->
+            temporary.withOutputStream { output -> input.transferTo(output) }
+        }
+        String actual = java.security.MessageDigest.getInstance('SHA-256')
+            .digest(temporary.bytes).encodeHex().toString()
+        if (actual != detectorModelSha256) {
+            temporary.delete()
+            throw new GradleException('Object detection model checksum mismatch')
+        }
+        if (!temporary.renameTo(destination)) {
+            destination.bytes = temporary.bytes
+            temporary.delete()
+        }
+    }
+}
 
 android {
     namespace 'cz.dachman.drone.director'
@@ -12,8 +40,8 @@ android {
         applicationId 'cz.dachman.drone.director'
         minSdk 30
         targetSdk 34
-        versionCode 1
-        versionName '0.2.0'
+        versionCode 2
+        versionName '0.3.0'
         manifestPlaceholders = [djiAppKey: validDjiKey ? djiKey : '__DJI_APP_KEY__']
     }
     flavorDimensions += 'connection'
@@ -43,9 +71,14 @@ android {
         jniLibs { useLegacyPackaging = true; keepDebugSymbols += ['**/*.so'] }
         resources { excludes += ['META-INF/rxjava.properties'] }
     }
+    androidResources { noCompress += ['tflite'] }
+    sourceSets.main.assets.srcDir(generatedModelDirectory.get().asFile)
 }
 
 tasks.configureEach { task ->
+    if (task.name.startsWith('merge') && task.name.endsWith('Assets')) {
+        task.dependsOn prepareObjectDetectionModel
+    }
     if (task.name == 'preDjiReleaseBuild') {
         task.doFirst { if (!validDjiKey) throw new GradleException('DJI_ANDROID_APP_KEY is required for DJI Release') }
     }
@@ -54,6 +87,7 @@ tasks.configureEach { task ->
     }
 }
 dependencies {
+    implementation 'org.tensorflow:tensorflow-lite-task-vision:0.4.4'
     djiImplementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
     djiImplementation 'androidx.appcompat:appcompat:1.7.0'
     djiImplementation 'androidx.constraintlayout:constraintlayout:2.2.0'

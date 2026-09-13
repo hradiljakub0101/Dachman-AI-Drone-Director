@@ -1,4 +1,43 @@
-# Dachman AI Drone Director – iOS supervised-flight prototype
+# Dachman AI Drone Director
+
+## Android – kompletní supervised-flight aplikace
+
+Android verze `0.3.0` pro DJI Mini 2 obsahuje živý obraz, telemetrii, offline detekci
+osob EfficientDet Lite, označení Worker 1 a Worker 2, animovaný náhled trajektorie,
+jednorázové systémové ověření a skutečné řízení přes DJI Mobile SDK `4.18`.
+
+K dispozici jsou režimy:
+
+- statické sledování;
+- Follow a Duo Follow;
+- oblet vlevo a vpravo;
+- odjezd;
+- stoupavé odhalení;
+- režim lana;
+- HOLD a ABORT.
+
+Rychlost lze volit mezi profily `PŘESNÝ`, `STANDARDNÍ` a `FILMOVÝ`. Výškový strop je
+volitelný po jednom metru od tří do sto dvaceti metrů; je to bezpečnostní omezení,
+nikoli příkaz automaticky do zvolené výšky vystoupat.
+
+Po samostatném potvrzení a biometrickém ověření umí aplikace také autonomní vzlet,
+autonomní přistání včetně potvrzení závěrečného dosednutí a DJI Return-to-Home.
+Vzlet, přistání ani RTH nejsou skrytou součástí filmového režimu a každý vyžaduje
+vlastní nové schválení.
+
+Tok řízení je:
+
+`DJI video -> offline AI -> potvrzený pracovník -> omezený planner -> SafetySupervisor -> animovaný náhled -> jednorázové ověření -> Virtual Stick`
+
+Pohyb kteréhokoli fyzického kniplu RC-N1 má přednost a vypne Virtual Stick nebo zruší
+probíhající automatickou akci. Mini 2 nemá všesměrové vyhýbání překážkám, proto aplikace
+nenahrazuje pilota ani kontrolu volné trasy.
+
+Sestavení a podpis jsou popsány v [DEVICE_SIGNING_GUIDE.md](DEVICE_SIGNING_GUIDE.md).
+Povinný test konkrétního dronu je v
+[docs/ANDROID_FLIGHT_ACCEPTANCE_CZ.md](docs/ANDROID_FLIGHT_ACCEPTANCE_CZ.md).
+
+## iOS – původní supervised-flight větev
 
 První iPhone větev pro DJI Mini 2. Cíl aplikace:
 
@@ -21,7 +60,7 @@ První iPhone větev pro DJI Mini 2. Cíl aplikace:
 - CocoaPods konfigurace,
 - GitHub Actions kompatibilitní build pro macOS 26 / Xcode 26.6.
 
-## Kritická bezpečnostní zásada
+## Kritická bezpečnostní zásada iOS větve
 
 AI příkaz nikdy nejde přímo do dronu. Tok je:
 
@@ -60,12 +99,5 @@ Projekt používá `DJI-SDK-iOS 4.16.2` přes CocoaPods. DJI pro USB/MFi připoj
 
 Protože DJI iOS MSDK 4.16.2 je stará binární knihovna, první důležitý milník je compatibility build s Xcode 26. Projekt obsahuje GitHub Actions job právě pro tento účel.
 
-## Android a ověření pilota
-
-V `androidApp` je Android prototyp se schválením manévru systémovou biometrií/kódem,
-demo APK a samostatnou diagnostickou DJI variantou. Detaily sestavení a podpisů jsou
-v [DEVICE_SIGNING_GUIDE.md](DEVICE_SIGNING_GUIDE.md).
-
-Současný rozsah, datový tok a omezení identity pilota jsou popsány v
-[docs/AUTHENTICATION_CZ.md](docs/AUTHENTICATION_CZ.md). Android zatím nepřebírá
-Vision/hlas ani Swift flight-core. iOS i Android zůstávají v simulaci manévrů.
+Omezení identity držitele zařízení jsou popsána v
+[docs/AUTHENTICATION_CZ.md](docs/AUTHENTICATION_CZ.md).

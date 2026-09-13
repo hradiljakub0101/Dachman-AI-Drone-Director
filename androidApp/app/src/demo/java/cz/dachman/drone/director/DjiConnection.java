@@ -1,8 +1,65 @@
 package cz.dachman.drone.director;
+
 import android.app.Activity;
-import java.util.function.Consumer;
-final class DjiConnection {
+import android.graphics.SurfaceTexture;
+
+/** Offline UI flavour used by CI; the installable DJI flavour owns all aircraft access. */
+final class DjiConnection implements DroneSession {
+    private Listener listener;
+
     DjiConnection(Activity activity) {}
-    String description() { return "Demo APK bez DJI SDK a bez připojení k dronu."; }
-    void connect(Consumer<String> status) { status.accept("Toto je demo. Pro diagnostiku použijte variantu dji s vlastním DJI klíčem."); }
+
+    @Override public void setListener(Listener listener) { this.listener = listener; }
+
+    @Override public void connect() {
+        if (listener != null) {
+            listener.onStatus("Offline náhled. Nainstaluj DJI variantu pro připojení Mini 2.");
+            listener.onTelemetry(TelemetrySnapshot.disconnected());
+            listener.onVideoState(false);
+            listener.onAircraftAction("ŽÁDNÁ", false);
+        }
+    }
+
+    @Override public void attachVideo(SurfaceTexture texture, int width, int height) {
+        if (listener != null) listener.onVideoState(false);
+    }
+
+    @Override public void detachVideo() {}
+    @Override public boolean supportsLiveControl() { return false; }
+
+    @Override public void enableVirtualStick(Completion completion) {
+        completion.onComplete(false, "Offline náhled nemůže řídit dron.");
+    }
+
+    @Override public void sendCommand(FlightCommand command) {}
+
+    @Override public void disableVirtualStick(String reason, Completion completion) {
+        completion.onComplete(true, reason);
+    }
+
+    @Override public void toggleRecording(Completion completion) {
+        completion.onComplete(false, "Kamera není v offline náhledu připojena.");
+    }
+
+    @Override public void takePhoto(Completion completion) {
+        completion.onComplete(false, "Kamera není v offline náhledu připojena.");
+    }
+
+    @Override public void startTakeoff(Completion completion) {
+        completion.onComplete(false, "Vzlet vyžaduje DJI variantu a připojený Mini 2.");
+    }
+
+    @Override public void startLanding(Completion completion) {
+        completion.onComplete(false, "Přistání vyžaduje DJI variantu a připojený Mini 2.");
+    }
+
+    @Override public void startReturnHome(Completion completion) {
+        completion.onComplete(false, "Návrat domů vyžaduje DJI variantu a připojený Mini 2.");
+    }
+
+    @Override public void cancelAircraftAction(Completion completion) {
+        completion.onComplete(false, "Neprobíhá žádná akce dronu.");
+    }
+
+    @Override public void close() { listener = null; }
 }
