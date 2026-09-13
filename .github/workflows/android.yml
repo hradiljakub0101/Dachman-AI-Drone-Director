@@ -1,6 +1,11 @@
 name: Android APK and approval tests
 on:
   workflow_dispatch:
+    inputs:
+      use_dji_key:
+        description: 'Build DJI debug APK using saved DJI_ANDROID_APP_KEY (embedded in APK)'
+        type: boolean
+        default: false
   push:
     branches: [main, 'fix/**']
   pull_request:
@@ -21,6 +26,8 @@ jobs:
           gradle-version: '8.11.1'
       - name: Test and build demo and DJI debug APKs
         working-directory: androidApp
+        env:
+          DJI_ANDROID_APP_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.use_dji_key && secrets.DJI_ANDROID_APP_KEY || '' }}
         run: gradle testDemoDebugUnitTest assembleDemoDebug assembleDjiDebug
       - uses: actions/upload-artifact@v4
         if: always()

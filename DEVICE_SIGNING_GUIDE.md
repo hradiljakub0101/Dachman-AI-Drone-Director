@@ -52,6 +52,11 @@ Debug APK jsou v `app/build/outputs/apk/<varianta>/debug/`. Gradle je podepíše
 klíčem. Ten není distribuční identita: CI debug klíč se může mezi běhy měnit.
 Bez DJI klíče lze diagnostickou variantu sestavit, ale registrace bude zablokována.
 
+Pro ruční CI build s tvým klíčem přidej v GitHub Settings > Secrets and variables > Actions
+repository secret `DJI_ANDROID_APP_KEY`. Po začlenění workflow do hlavní větve spusť
+`Android APK and approval tests` přes Run workflow a zapni `use_dji_key`.
+Klíč bude vložen do APK. Automatické push/PR kontroly jej nikdy nepoužívají.
+
 Pro Release připravte vlastní dlouhodobý keystore v Android Studiu (Generate Signed
 Bundle / APK). Pokud již aplikaci distribuujete, použijte její existující podpis.
 Keystore zálohujte mimo repozitář. Nastavte pouze v bezpečném prostředí:
