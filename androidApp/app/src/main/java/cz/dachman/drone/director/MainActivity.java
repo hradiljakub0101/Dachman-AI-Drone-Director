@@ -589,8 +589,12 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         sampling = false;
         main.removeCallbacks(frameSampler);
         if (runtime != null) runtime.hold("HOLD – aplikace není v popředí");
-        invalidatePending(null);
         super.onPause();
+    }
+
+    @Override protected void onStop() {
+        invalidatePending(null);
+        super.onStop();
     }
 
     @Override protected void onDestroy() {

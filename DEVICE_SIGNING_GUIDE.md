@@ -37,7 +37,7 @@ Pro lokální zařízení nastavte správný Signing Team; zařízení může b�
 ## Android / APK
 
 - Projekt: `androidApp`, Java 17, Gradle 8.11.1, Android SDK 35, minimum Android 11.
-- `demo`: bez DJI SDK, balíček `cz.dachman.drone.director.demo`.
+- `demo`: offline kontrola UI pro CI, bez DJI SDK, balíček `cz.dachman.drone.director.demo`.
 - `dji`: DJI MSDK 4.18, balíček `cz.dachman.drone.director`.
 - Pro variantu dji vytvořte **Android** DJI App Key pro uvedený balíček.
 - Proměnná `DJI_ANDROID_APP_KEY` se během sestavení vloží do manifest metadata
@@ -50,7 +50,7 @@ gradle testDemoDebugUnitTest assembleDemoDebug assembleDjiDebug
 
 Debug APK jsou v `app/build/outputs/apk/<varianta>/debug/`. Gradle je podepíše vývojovým
 klíčem. Ten není distribuční identita: CI debug klíč se může mezi běhy měnit.
-Bez DJI klíče lze diagnostickou variantu sestavit, ale registrace bude zablokována.
+Bez DJI klíče lze DJI variantu sestavit pro CI, ale registrace dronu bude zablokována.
 
 Pro ruční CI build s tvým klíčem přidej v GitHub Settings > Secrets and variables > Actions
 repository secret `DJI_ANDROID_APP_KEY`. Po začlenění workflow do hlavní větve spusť
@@ -88,7 +88,8 @@ Soukromý podepisovací klíč se do aplikace nebalí. Nezapínejte verbose logo
 - DJI: platný/neplatný klíč, prvotní internetová registrace, RC-N1, USB a skutečný Mini 2.
 - MSDK 4 Android obsahuje starší nativní knihovny: zvlášť ověřte 16KB stránky a Android 15+.
   Samotný targetSdk tento problém neopraví. Projekt není prohlášen za připravený pro Google Play.
-- Žádná platforma zde nepředává schválený ukázkový manévr do skutečného řízení.
+- Android: proveď celý postup v `docs/ANDROID_FLIGHT_ACCEPTANCE_CZ.md`; softwarový build
+  nenahrazuje ověření skutečného Mini 2, RC-N1 a telefonu.
 
 Zdroje:
 - https://github.com/dji-sdk/Mobile-SDK-iOS (DJISDKAppKey v plist)

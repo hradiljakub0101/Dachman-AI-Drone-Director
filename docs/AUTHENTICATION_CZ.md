@@ -20,7 +20,7 @@ Pozdní callback nesmí schválit jiný záměr. Neúspěch nebo nedostupná aut
 Demo varianta nemá SDK ani jeho oprávnění. DJI varianta umí registraci a připojení pro diagnostiku.
 Oprávnění Androidu vyžaduje až při připojování, registrace bez nich neproběhne.
 
-`Výběr manévru -> BiometricPrompt (silná biometrie nebo kód zařízení) -> jednorázový ApprovalGate -> výsledek simulace`
+`Výběr akce -> animovaný náhled / bezpečnostní checklist -> BiometricPrompt -> jednorázový ApprovalGate -> živá telemetrie -> DJI příkaz`
 
 ApprovalGate váže výsledek na konkrétní revizi. Zrušení, změna manévru, opakované použití
 nebo pozdní výsledek nemohou udělit schválení. onStop ruší záměr a dialog.
@@ -38,7 +38,8 @@ který tento prototyp zatím neimplementuje; diagnostika připojení ho nenahraz
 
 ## Omezení řízení
 
-Obě UI zůstávají prototypy. iOS SafetyContext používá ukázkové hodnoty a Android provádí
-pouze schválení názvu manévru, nikoli výpočet letové trajektorie. Video/Vision/hlas zatím
-nejsou do Androidu přeneseny. Živé řízení vyžaduje samostatné propojení telemetrie,
-flight-core, override a hardwarové ověření. Schválení držitele telefonu tyto kroky nenahrazuje.
+iOS UI zůstává prototyp. Android propojuje živé DJI video, offline detekci osob,
+telemetrii, omezený planner, SafetySupervisor, Virtual Stick i hardwarový RC override.
+Vzlet, přistání a RTH vyžadují vlastní bezpečnostní checklist a nové ověření.
+Schválení držitele telefonu nenahrazuje oprávnění pilota, kontrolu prostoru ani povinný
+hardwarový akceptační test.

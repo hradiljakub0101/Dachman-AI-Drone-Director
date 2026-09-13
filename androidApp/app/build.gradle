@@ -17,7 +17,7 @@ def prepareObjectDetectionModel = tasks.register('prepareObjectDetectionModel') 
         File destination = generatedModelFile.get().asFile
         destination.parentFile.mkdirs()
         File temporary = new File(destination.parentFile, destination.name + '.download')
-        new URI(detectorModelUrl).toURL().openStream().withCloseable { input ->
+        new java.net.URI(detectorModelUrl).toURL().openStream().withCloseable { input ->
             temporary.withOutputStream { output -> input.transferTo(output) }
         }
         String actual = java.security.MessageDigest.getInstance('SHA-256')
