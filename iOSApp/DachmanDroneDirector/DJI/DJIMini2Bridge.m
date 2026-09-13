@@ -9,6 +9,14 @@
 @implementation DJIMini2Bridge
 
 - (void)registerSDK {
+    NSString *key = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"DJISDKAppKey"];
+    if (![key isKindOfClass:[NSString class]] ||
+        [[key stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] length] == 0 ||
+        [key containsString:@"__"] || [key containsString:@"$("] ||
+        [key.lowercaseString containsString:@"placeholder"]) {
+        if (self.statusBlock) self.statusBlock(@"DJI SDK: App Key not configured in application bundle");
+        return;
+    }
     [DJISDKManager registerAppWithDelegate:self];
     if (self.statusBlock) self.statusBlock(@"Registering DJI SDK…");
 }

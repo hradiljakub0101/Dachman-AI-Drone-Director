@@ -1,92 +1,94 @@
-# DJI SDK Integration Guide
+# Podepisování a registrace mobilních aplikací
 
-## Bundle Identifier
-**Exact Bundle Identifier:** `cz.dachman.drone.director`
+## Tři různé věci
 
-This identifier must match in:
-- Apple Developer Account provisioning profile
-- Xcode project build settings
-- iPhone app installation
+1. DJI App Key registruje aplikaci u DJI. iOS a Android potřebují samostatnou registraci.
+2. Certifikát Apple nebo Android keystore podepisuje instalační soubor a jeho aktualizace.
+3. Systémová biometrie / kód zařízení ověřuje držitele zařízení před schválením manévru.
+   Nejde o ověření jména pilota, licence, DJI účtu ani firemní role.
 
-## Required Credentials & Configuration
+## iPhone / iOS
 
-### 1. DJI App Key (REQUIRED for live device)
-**Provider:** DJI Developer Account (https://developer.dji.com)
+- Bundle ID: `cz.dachman.drone.director`.
+- DJI MSDK 4.16.2 čte `DJISDKAppKey` z **výsledného** Info.plist.
+- Zdrojový Info.plist ponechte se zástupnou hodnotou. Nesdílejte skutečný klíč v Gitu.
+- Exportujte `DJI_APP_KEY` do prostředí Xcode / xcodebuild. Při spuštění Xcode z Finderu
+  prostředí terminálu není automaticky dostupné: pro reprodukovatelné sestavení použijte skript.
+- XcodeGen přidává poslední build fázi `scripts/inject_dji_key.py`. Ta závisí na zpracovaném
+  plist, vloží klíč do něj a skončí před podpisem aplikace. Zdrojový plist neupravuje.
+- Podepsané device sestavení a každé Release sestavení bez skutečného klíče skončí chybou.
+  Nepodepsaný Debug pro CI může mít placeholder; aplikace pak registraci odmítne.
+- Runtime setter byl odstraněn: dříve hlásil klíč načtený, který SDK ve skutečnosti nepoužilo.
+- Apple certifikát a profil musí odpovídat Team ID, Bundle ID a distribuční metodě.
 
-**How to supply:**
-- **Method A (Recommended for CI/CD):** Set environment variable before build
-  ```bash
-  export DJI_APP_KEY="your_64_char_hex_key_here"
-  xcodebuild -scheme DachmanDroneDirector build
-  ```
+Na Macu s Xcode a již přidaným Apple účtem/certifikátem:
 
-- **Method B (Device signing):** Replace `__DJI_APP_KEY__` in `iOSApp/DachmanDroneDirector/Info.plist` with your actual key
-  - ⚠️ **DO NOT commit the real key to Git**
-  - Use a build script or Xcode Run Script build phase to inject it
-
-### 2. Apple Developer Certificate & Provisioning Profile
-**For signed iPhone device build:**
-
-- Apple Developer Team ID (e.g., `ABCD123456`)
-- Provisioning profile for bundle ID `cz.dachman.drone.director`
-- Development or Distribution certificate
-
-**Update in Xcode or project.yml:**
-```yaml
-settings:
-  base:
-    DEVELOPMENT_TEAM: "YOUR_TEAM_ID_HERE"
-    CODE_SIGN_STYLE: Automatic  # or Manual if using specific certificate
+```sh
+export APPLE_TEAM_ID="YOUR_TEAM_ID"
+# DJI_APP_KEY nastavte bezpečně v prostředí; nevkládejte jej do sdíleného příkazu.
+bash scripts/archive_ios.sh
 ```
 
-### 3. Device UUID
-**For initial testing on a single device:**
-- Get iPhone UDID via Xcode Organizer or iTunes
-- Add to provisioning profile in Apple Developer Account
+Archiv je v `iOSApp/build/DachmanDroneDirector.xcarchive`. Export IPA provádějte přes
+Xcode Organizer podle zamýšleného použití (registrované zařízení, TestFlight, App Store).
+Skript nevytváří Apple účet, nekupuje členství a neslibuje dostupnost distribučního profilu.
+Pro lokální zařízení nastavte správný Signing Team; zařízení může být nutné zaregistrovat.
 
-## Secure Key Management
+## Android / APK
 
-### For GitHub Actions CI/CD:
-1. Add DJI App Key as GitHub Secret: `DJI_APP_KEY`
-2. Update workflow to pass it:
-   ```yaml
-   - name: Build iOS app
-     env:
-       DJI_APP_KEY: ${{ secrets.DJI_APP_KEY }}
-     run: xcodebuild ...
-   ```
+- Projekt: `androidApp`, Java 17, Gradle 8.11.1, Android SDK 35, minimum Android 11.
+- `demo`: bez DJI SDK, balíček `cz.dachman.drone.director.demo`.
+- `dji`: DJI MSDK 4.18, balíček `cz.dachman.drone.director`.
+- Pro variantu dji vytvořte **Android** DJI App Key pro uvedený balíček.
+- Proměnná `DJI_ANDROID_APP_KEY` se během sestavení vloží do manifest metadata
+  `com.dji.sdk.API_KEY`, které DJI SDK skutečně čte. Žádný runtime falešný override.
 
-### For Local Development:
-1. Create `.env.local` (not committed):
-   ```bash
-   export DJI_APP_KEY="your_key"
-   ```
-2. Source it before building:
-   ```bash
-   source .env.local
-   xcodebuild ...
-   ```
+```sh
+cd androidApp
+gradle testDemoDebugUnitTest assembleDemoDebug assembleDjiDebug
+```
 
-## Signing Settings Status
+Debug APK jsou v `app/build/outputs/apk/<varianta>/debug/`. Gradle je podepíše vývojovým
+klíčem. Ten není distribuční identita: CI debug klíč se může mezi běhy měnit.
+Bez DJI klíče lze diagnostickou variantu sestavit, ale registrace bude zablokována.
 
-### Current Configuration:
-✓ Bundle ID: `cz.dachman.drone.director`  
-✓ Deployment Target: iOS 16.0  
-✓ Code Sign Style: Automatic (ready for Team ID)  
-✓ Script Sandboxing: Disabled (required for DJI SDK)  
-⚠️ Development Team: **Empty** (set before device signing)  
+Pro Release připravte vlastní dlouhodobý keystore v Android Studiu (Generate Signed
+Bundle / APK). Pokud již aplikaci distribuujete, použijte její existující podpis.
+Keystore zálohujte mimo repozitář. Nastavte pouze v bezpečném prostředí:
 
-### Next Steps to Enable Device Signing:
-1. Enroll Apple Developer Program ($99/year)
-2. Create provisioning profile for `cz.dachman.drone.director`
-3. Set `DEVELOPMENT_TEAM` in project.yml
-4. Provide DJI App Key via environment variable or build phase
+- `ANDROID_KEYSTORE_PATH` – absolutní cesta k souboru;
+- `ANDROID_KEYSTORE_PASSWORD`;
+- `ANDROID_KEY_ALIAS`;
+- `ANDROID_KEY_PASSWORD`;
+- `DJI_ANDROID_APP_KEY` pro dji Release.
 
-## Safety Architecture
+Poté `gradle assembleDjiRelease` nebo `gradle assembleDemoRelease`.
+Release bez kompletního podpisu skončí chybou; dji Release navíc vyžaduje DJI klíč.
+Aplikace sama nevytváří certifikáty během registrace uživatele.
 
-✅ **SafetySupervisor:** Fully active - all velocity & safety limits enforced  
-✅ **Pilot Override:** Always available via remote controller  
-✅ **Simulation Mode:** Enabled by default in DJIStatusView  
-✅ **Autonomous Flight:** Requires explicit user approval + valid SafetyContext  
+## CI a ochrana klíčů
 
-**Mode:** DJI connection shows status only. No autonomous commands sent unless user approves in flight director UI.
+Pull requesty spouštějí jen testy a Debug bez provozních tajemství. iOS CI je nepodepsaný
+compatibility build, nikoli IPA pro instalaci. Android CI zveřejní debug APK jako artifact.
+Současné workflow záměrně nemá Release s přístupem ke klíčům z nedůvěryhodných PR.
+Před automatickým distribučním sestavením přidejte chráněné release prostředí a jeho secrets.
+
+DJI App Key bude součástí IPA/APK a není ekvivalentem serverového tajemství.
+Soukromý podepisovací klíč se do aplikace nebalí. Nezapínejte verbose logování tajemství.
+`.gitignore` vylučuje env soubory, keystory, certifikáty, profily a build výstupy.
+
+## Ověření na zařízení, které stále zbývá
+
+- Biometrie/kód: úspěch, odmítnutí, zrušení, chybějící zámek, změna manévru, HOLD/ABORT a pozadí.
+- DJI: platný/neplatný klíč, prvotní internetová registrace, RC-N1, USB a skutečný Mini 2.
+- MSDK 4 Android obsahuje starší nativní knihovny: zvlášť ověřte 16KB stránky a Android 15+.
+  Samotný targetSdk tento problém neopraví. Projekt není prohlášen za připravený pro Google Play.
+- Žádná platforma zde nepředává schválený ukázkový manévr do skutečného řízení.
+
+Zdroje:
+- https://github.com/dji-sdk/Mobile-SDK-iOS (DJISDKAppKey v plist)
+- https://github.com/dji-sdk/Mobile-SDK-Android (MSDK 4.18)
+- https://github.com/dji-sdk/Mobile-SDK-Android/issues/1343 (16KB compatibility)
+- https://developer.android.com/studio/publish/app-signing
+- https://developer.android.com/identity/sign-in/biometric-auth
+- https://developer.apple.com/documentation/localauthentication
