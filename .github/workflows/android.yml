@@ -27,10 +27,12 @@ jobs:
       - name: Test and build demo and DJI debug APKs
         working-directory: androidApp
         env:
-          DJI_ANDROID_APP_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.use_dji_key && secrets.DJI_ANDROID_APP_KEY || '' }}
+          # Pull-request builds stay keyless; the protected main branch may
+          # produce the installable DJI build automatically after merge.
+          DJI_ANDROID_APP_KEY: ${{ ((github.event_name == 'workflow_dispatch' && inputs.use_dji_key) || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && secrets.DJI_ANDROID_APP_KEY || '' }}
         run: gradle testDemoDebugUnitTest assembleDemoDebug assembleDjiDebug
       - name: Verify configured DJI key in APK and APK signature
-        if: github.event_name == 'workflow_dispatch' && inputs.use_dji_key
+        if: (github.event_name == 'workflow_dispatch' && inputs.use_dji_key) || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         env:
           DJI_ANDROID_APP_KEY: ${{ secrets.DJI_ANDROID_APP_KEY }}
         run: python3 scripts/verify_android_apk.py
