@@ -48,7 +48,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private static final int FRAME_WIDTH = 384;
     private static final int FRAME_HEIGHT = 216;
 
-    private enum PendingKind { NONE, MODE, TAKEOFF, LANDING, RETURN_HOME }
+    private enum PendingKind { NONE, MODE, TAKEOFF, LANDING, RETURN_HOME, FULL_MISSION }
 
     private final ApprovalGate gate = new ApprovalGate();
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -87,6 +87,23 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private boolean videoActive;
     private boolean sampling;
     private boolean aircraftActionActive;
+    /** Guided mission: every composition still requires biometric approval and can be aborted by RC. */
+    private boolean missionActive;
+    private int missionIndex;
+    private final FlightMode[] missionModes = new FlightMode[] {
+        FlightMode.FOLLOW, FlightMode.ORBIT_RIGHT, FlightMode.PULL_AWAY, FlightMode.REVEAL_UP
+    };
+    private final Runnable missionPrompt = () -> {
+        if (!missionActive || tracker == null) return;
+        if (!tracker.snapshot().hasRequiredTargets(missionModes[missionIndex])) {
+            missionActive = false;
+            showStatus("Mise zastavena – Worker už není bezpečně potvrzen v obrazu.");
+            return;
+        }
+        showStatus("AI navrhuje kompozici " + (missionIndex + 1) + " z " + missionModes.length + ": "
+            + missionModes[missionIndex].label + ". Zkontroluj náhled a potvrď.");
+        requestMode(missionModes[missionIndex]);
+    };
 
     private final Runnable frameSampler = new Runnable() {
         @Override public void run() {
@@ -318,6 +335,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         addGridButton(aircraftGrid, "VZLET", GREEN, () -> requestAircraftAction(PendingKind.TAKEOFF));
         addGridButton(aircraftGrid, "PŘISTÁNÍ", ORANGE, () -> requestAircraftAction(PendingKind.LANDING));
         addGridButton(aircraftGrid, "NÁVRAT DOMŮ", ORANGE, () -> requestAircraftAction(PendingKind.RETURN_HOME));
+        addGridButton(aircraftGrid, "AUTONOMNÍ MISE", CYAN, this::requestFullMission);
         cancelActionButton = button("ZRUŠIT AUTO AKCI", RED,
             () -> dji.cancelAircraftAction(this::showCompletion));
         cancelActionButton.setEnabled(false);
@@ -410,6 +428,25 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         showStatus("Před ověřením zkontroluj prostor, domovský bod a stav dronu.");
     }
 
+    private void requestFullMission() {
+        if (tracker == null || !tracker.snapshot().hasRequiredTargets(FlightMode.FOLLOW)) {
+            showStatus("Nejprve označ a potvrď Worker 1 v živém obrazu.");
+            return;
+        }
+        if (runtime != null && runtime.isActive()) runtime.abort("Příprava mise – HOLD");
+        invalidatePending(null);
+        pendingKind = PendingKind.FULL_MISSION;
+        gate.request("AUTONOMNÍ MISE: vzlet, potvrzené sledování Worker 1, čtyři kompozice a návrat domů");
+        pendingText.setText("AUTONOMNÍ MISE\nVzlet → sledování Worker 1 → čtyři schválené kompozice → RTH.");
+        readinessCheck.setVisibility(View.VISIBLE);
+        readinessCheck.setChecked(false);
+        approvalCard.setVisibility(View.VISIBLE);
+        flightPath.setPlan(new FlightPlan(FlightMode.FOLLOW,
+            FlightLevel.ofMeters(heightSeek.getProgress()), (FlightProfile)profileSpinner.getSelectedItem()));
+        updateApprovalButton();
+        showStatus("Před startem potvrď volný prostor, baterii, GPS a přímý dohled.");
+    }
+
     private void authenticate() {
         if (gate.pending() == null || pendingKind == PendingKind.NONE || authentication != null) return;
         int methods = BiometricManager.Authenticators.BIOMETRIC_STRONG
@@ -452,7 +489,23 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     private void executeApproved(PendingKind kind, FlightPlan plan) {
         if (kind == PendingKind.MODE && plan != null) {
-            runtime.start(plan, this::showCompletion);
+            runtime.start(plan, (success, message) -> {
+                showCompletion(success, message);
+                if (!success || !missionActive) return;
+                // Keep each shot bounded; then stop, re-check the target and ask for the next approval.
+                main.postDelayed(() -> {
+                    if (!missionActive) return;
+                    runtime.hold("Kompozice dokončena – HOLD před dalším záběrem");
+                    missionIndex++;
+                    if (missionIndex < missionModes.length) {
+                        main.postDelayed(missionPrompt, 900L);
+                    } else {
+                        missionActive = false;
+                        showStatus("Kompozice dokončeny. Zkontroluj trasu a potvrď bezpečný návrat domů.");
+                        requestAircraftAction(PendingKind.RETURN_HOME);
+                    }
+                }, 8_000L);
+            });
         } else if (kind == PendingKind.TAKEOFF) {
             runtime.abort("Autonomní vzlet – Virtual Stick vypnut");
             dji.startTakeoff(this::showCompletion);
@@ -462,6 +515,15 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         } else if (kind == PendingKind.RETURN_HOME) {
             runtime.abort("Návrat domů – Virtual Stick vypnut");
             dji.startReturnHome(this::showCompletion);
+        } else if (kind == PendingKind.FULL_MISSION) {
+            missionActive = true;
+            missionIndex = 0;
+            runtime.abort("Autonomní mise – příprava vzletu");
+            dji.startTakeoff((success, message) -> {
+                showCompletion(success, message);
+                if (success) main.postDelayed(missionPrompt, 5_000L);
+                else missionActive = false;
+            });
         }
     }
 
@@ -483,12 +545,16 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     }
 
     private void hold() {
+        missionActive = false;
+        main.removeCallbacks(missionPrompt);
         invalidatePending(null);
         if (runtime != null) runtime.hold("HOLD – AI řízení vypnuto");
         showStatus("HOLD – dron drží pilot nebo letový kontrolér DJI.");
     }
 
     private void abort() {
+        missionActive = false;
+        main.removeCallbacks(missionPrompt);
         invalidatePending(null);
         if (runtime != null) runtime.abort("ABORT – AI řízení vypnuto");
         if (aircraftActionActive) dji.cancelAircraftAction(this::showCompletion);
@@ -515,7 +581,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private void updateApprovalButton() {
         if (approveButton == null) return;
         boolean needsChecklist = pendingKind == PendingKind.TAKEOFF
-            || pendingKind == PendingKind.LANDING || pendingKind == PendingKind.RETURN_HOME;
+            || pendingKind == PendingKind.LANDING || pendingKind == PendingKind.RETURN_HOME
+            || pendingKind == PendingKind.FULL_MISSION;
         approveButton.setEnabled(authentication == null && pendingKind != PendingKind.NONE
             && (!needsChecklist || readinessCheck.isChecked()));
         approveButton.setText(authentication == null ? "OVĚŘIT A SPUSTIT" : "OVĚŘOVÁNÍ…");
