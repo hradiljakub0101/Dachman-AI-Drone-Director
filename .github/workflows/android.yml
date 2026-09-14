@@ -24,6 +24,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
+      - name: Verify DJI RC-N1 USB integration
+        run: python3 scripts/verify_android_usb_integration.py
       - name: Test and build demo and DJI debug APKs
         working-directory: androidApp
         env:

@@ -20,6 +20,10 @@ final class DjiConnection implements DroneSession {
         }
     }
 
+    @Override public void onUsbAccessoryAttached() {
+        connect();
+    }
+
     @Override public void attachVideo(SurfaceTexture texture, int width, int height) {
         if (listener != null) listener.onVideoState(false);
     }

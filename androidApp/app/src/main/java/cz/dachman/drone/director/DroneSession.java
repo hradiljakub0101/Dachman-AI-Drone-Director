@@ -16,6 +16,7 @@ public interface DroneSession {
 
     void setListener(Listener listener);
     void connect();
+    void onUsbAccessoryAttached();
     void attachVideo(SurfaceTexture texture, int width, int height);
     void detachVideo();
     boolean supportsLiveControl();

@@ -11,6 +11,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <uses-feature android:name="android.hardware.usb.accessory" android:required="true" />
     <application android:name=".DroneApplication" android:extractNativeLibs="true" android:allowBackup="false" tools:replace="android:allowBackup">
         <uses-library android:name="org.apache.http.legacy" android:required="false" />
