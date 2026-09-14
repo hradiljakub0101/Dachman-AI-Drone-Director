@@ -31,7 +31,7 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import java.util.Locale;
 
-/** Landscape flight console for supervised DJI Mini 2 filming. */
+/** Portrait, camera-first flight console for supervised DJI Mini 2 filming. */
 public final class MainActivity extends Activity implements DroneSession.Listener,
         WorkerTracker.Listener, FlightRuntime.Listener, TextureView.SurfaceTextureListener {
     private static final int BACKGROUND = Color.rgb(5, 17, 24);
@@ -57,6 +57,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private TextureView video;
     private TrackingOverlay overlay;
     private FlightPathView flightPath;
+    private FlightMapView flightMap;
+    private FlightRadarView flightRadar;
     private TextView videoPlaceholder;
     private TextView liveBadge;
     private TextView connectionText;
@@ -115,92 +117,116 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     }
 
     private void buildInterface() {
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(12), dp(8), dp(12), dp(10));
+        FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(BACKGROUND);
 
-        LinearLayout top = row();
-        LinearLayout titles = column();
-        TextView title = text("DACHMAN  AI  DRONE  DIRECTOR", 21, Color.WHITE, true);
-        TextView subtitle = text("DJI MINI 2  •  SUPERVISED FLIGHT", 11, CYAN, true);
-        titles.addView(title);
-        titles.addView(subtitle);
-        top.addView(titles, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        Button connect = button("PŘIPOJIT DJI", CYAN, () -> dji.connect());
-        top.addView(connect, buttonParams());
-        recordButton = button("● REC", RED, () -> dji.toggleRecording(this::showCompletion));
-        top.addView(recordButton, buttonParams());
-        Button photo = button("FOTO", PANEL_LIGHT, () -> dji.takePhoto(this::showCompletion));
-        top.addView(photo, buttonParams());
-        root.addView(top, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
-
-        telemetryText = text("SDK —   DRON —   BATERIE —   GNSS —   SIGNÁL —   VÝŠKA —", 12, Color.WHITE, true);
-        telemetryText.setGravity(Gravity.CENTER_VERTICAL);
-        telemetryText.setPadding(dp(10), 0, dp(10), 0);
-        telemetryText.setBackground(card(PANEL, 10, CYAN));
-        root.addView(telemetryText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(38)));
-
-        LinearLayout content = row();
-        LinearLayout videoColumn = column();
-        LinearLayout.LayoutParams leftParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.62f);
-        leftParams.setMargins(0, dp(9), dp(9), 0);
-        content.addView(videoColumn, leftParams);
-
         FrameLayout videoFrame = new FrameLayout(this);
-        videoFrame.setBackground(card(Color.BLACK, 12, PANEL_LIGHT));
+        videoFrame.setBackgroundColor(Color.BLACK);
+        root.addView(videoFrame, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
         video = new TextureView(this);
         video.setSurfaceTextureListener(this);
-        videoFrame.addView(video, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        videoFrame.addView(video, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
         videoPlaceholder = text("ČEKÁM NA ŽIVÝ OBRAZ Z MINI 2", 15, MUTED, true);
         videoPlaceholder.setGravity(Gravity.CENTER);
-        videoFrame.addView(videoPlaceholder, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        videoPlaceholder.setBackgroundColor(BACKGROUND);
+        videoFrame.addView(videoPlaceholder, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
         overlay = new TrackingOverlay(this);
         overlay.setTapListener(this::selectTarget);
-        videoFrame.addView(overlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        liveBadge = text("VIDEO OFF", 11, Color.WHITE, true);
-        liveBadge.setGravity(Gravity.CENTER);
-        liveBadge.setBackground(card(RED, 12, RED));
-        FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(dp(92), dp(28), Gravity.TOP | Gravity.RIGHT);
-        badgeParams.setMargins(0, dp(10), dp(10), 0);
-        videoFrame.addView(liveBadge, badgeParams);
-        videoColumn.addView(videoFrame, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        videoFrame.addView(overlay, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        LinearLayout beneathVideo = row();
+        LinearLayout topHud = row();
+        topHud.setPadding(dp(9), dp(5), dp(9), dp(5));
+        topHud.setBackground(card(Color.argb(215, 5, 17, 24), 0, PANEL_LIGHT));
+        LinearLayout titles = column();
+        TextView title = text("DACHMAN AI", 17, Color.WHITE, true);
+        TextView subtitle = text("DRONE DIRECTOR • MINI 2", 9, GREEN, true);
+        titles.addView(title);
+        titles.addView(subtitle);
+        topHud.addView(titles, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+
+        Button connect = button("DJI", CYAN, () -> dji.connect());
+        topHud.addView(connect, compactButtonParams(dp(52)));
+        recordButton = button("● REC", RED, () -> dji.toggleRecording(this::showCompletion));
+        topHud.addView(recordButton, compactButtonParams(dp(58)));
+        Button photo = button("FOTO", PANEL_LIGHT, () -> dji.takePhoto(this::showCompletion));
+        topHud.addView(photo, compactButtonParams(dp(54)));
+
+        liveBadge = text("OFF", 9, Color.WHITE, true);
+        liveBadge.setGravity(Gravity.CENTER);
+        liveBadge.setBackground(card(RED, 10, RED));
+        LinearLayout.LayoutParams liveParams = new LinearLayout.LayoutParams(dp(44), dp(34));
+        liveParams.setMargins(dp(4), 0, 0, 0);
+        topHud.addView(liveBadge, liveParams);
+
+        FrameLayout.LayoutParams topParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(56), Gravity.TOP);
+        root.addView(topHud, topParams);
+
+        telemetryText = text("SDK —  DRON —  BATERIE —  GNSS —  VÝŠKA —", 10, Color.WHITE, true);
+        telemetryText.setGravity(Gravity.CENTER_VERTICAL);
+        telemetryText.setPadding(dp(9), dp(3), dp(9), dp(3));
+        telemetryText.setMaxLines(2);
+        telemetryText.setBackground(card(Color.argb(210, 5, 17, 24), 9, GREEN));
+        FrameLayout.LayoutParams telemetryParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(48), Gravity.TOP);
+        telemetryParams.setMargins(dp(8), dp(62), dp(8), 0);
+        root.addView(telemetryText, telemetryParams);
+
+        flightRadar = new FlightRadarView(this);
+        FrameLayout.LayoutParams radarParams = new FrameLayout.LayoutParams(
+            dp(94), dp(106), Gravity.TOP | Gravity.RIGHT);
+        radarParams.setMargins(0, dp(116), dp(9), 0);
+        root.addView(flightRadar, radarParams);
+
+        flightMap = new FlightMapView(this);
+        FrameLayout.LayoutParams mapParams = new FrameLayout.LayoutParams(
+            dp(142), dp(112), Gravity.BOTTOM | Gravity.LEFT);
+        mapParams.setMargins(dp(9), 0, 0, dp(316));
+        root.addView(flightMap, mapParams);
+
         flightPath = new FlightPathView(this);
-        LinearLayout.LayoutParams pathParams = new LinearLayout.LayoutParams(0, dp(122), 0.58f);
-        pathParams.setMargins(0, dp(8), dp(8), 0);
-        beneathVideo.addView(flightPath, pathParams);
-        LinearLayout statePanel = column();
-        statePanel.setPadding(dp(12), dp(8), dp(12), dp(8));
-        statePanel.setBackground(card(PANEL, 10, PANEL_LIGHT));
-        statusText = text("PREFLIGHT – čekám na připojení", 14, Color.WHITE, true);
-        commandText = text("PITCH 0,00   ROLL 0,00   YAW 0,0   VERT 0,00", 11, MUTED, false);
-        connectionText = text("DJI SDK se připravuje…", 11, MUTED, false);
-        aircraftActionText = text("AUTOMATICKÁ AKCE: ŽÁDNÁ", 11, ORANGE, true);
-        statePanel.addView(statusText);
-        statePanel.addView(commandText);
-        statePanel.addView(connectionText);
-        statePanel.addView(aircraftActionText);
-        beneathVideo.addView(statePanel, new LinearLayout.LayoutParams(0, dp(122), 0.42f));
-        videoColumn.addView(beneathVideo);
+        flightPath.setAlpha(0.94f);
+        flightPath.setBackground(card(Color.argb(225, 5, 17, 24), 10, CYAN));
+        FrameLayout.LayoutParams pathParams = new FrameLayout.LayoutParams(
+            dp(174), dp(112), Gravity.BOTTOM | Gravity.RIGHT);
+        pathParams.setMargins(0, 0, dp(9), dp(316));
+        root.addView(flightPath, pathParams);
 
         ScrollView controlScroll = new ScrollView(this);
         controlScroll.setFillViewport(true);
         controlScroll.setVerticalScrollBarEnabled(false);
         LinearLayout controls = column();
-        controls.setPadding(dp(12), dp(8), dp(12), dp(16));
-        controls.setBackground(card(PANEL, 12, PANEL_LIGHT));
+        controls.setPadding(dp(10), dp(7), dp(10), dp(14));
+        controls.setBackground(card(Color.argb(235, 5, 17, 24), 12, PANEL_LIGHT));
         controlScroll.addView(controls);
-        LinearLayout.LayoutParams rightParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
-        rightParams.setMargins(0, dp(9), 0, 0);
-        content.addView(controlScroll, rightParams);
-        root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-        setContentView(root);
+        FrameLayout.LayoutParams controlParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(248), Gravity.BOTTOM);
+        controlParams.setMargins(dp(7), 0, dp(7), dp(61));
+        root.addView(controlScroll, controlParams);
+
+        LinearLayout statePanel = column();
+        statePanel.setPadding(dp(8), dp(5), dp(8), dp(5));
+        statePanel.setBackground(card(Color.argb(210, 17, 48, 61), 9, CYAN));
+        statusText = text("PREFLIGHT – čekám na připojení", 12, Color.WHITE, true);
+        commandText = text("PITCH 0,00  ROLL 0,00  YAW 0,0  VERT 0,00", 9, MUTED, false);
+        connectionText = text("DJI SDK se připravuje…", 9, MUTED, false);
+        aircraftActionText = text("AUTOMATICKÁ AKCE: ŽÁDNÁ", 9, ORANGE, true);
+        statePanel.addView(statusText);
+        statePanel.addView(commandText);
+        statePanel.addView(connectionText);
+        statePanel.addView(aircraftActionText);
+        controls.addView(statePanel);
 
         section(controls, "CÍL AI");
-        aiText = text("AI MODEL SE NAČÍTÁ…", 11, MUTED, true);
-        targetText = text("Worker 1: —   Worker 2: —", 12, Color.WHITE, false);
+        aiText = text("AI MODEL SE NAČÍTÁ…", 10, MUTED, true);
+        targetText = text("Worker 1: —   Worker 2: —", 10, Color.WHITE, false);
         controls.addView(aiText);
         controls.addView(targetText);
         LinearLayout workerRow = row();
@@ -216,8 +242,9 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         controls.addView(clearWorkers, fullButtonParams());
         selectWorkerSlot(1);
 
-        section(controls, "REŽIM LETU");
+        section(controls, "VŠECHNY REŽIMY LETU");
         GridLayout modeGrid = grid();
+        modeGrid.setColumnCount(4);
         addMode(modeGrid, FlightMode.STATIC_TRACK);
         addMode(modeGrid, FlightMode.FOLLOW);
         addMode(modeGrid, FlightMode.DUO_FOLLOW);
@@ -233,8 +260,9 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         profileSpinner.setAdapter(new DarkSpinnerAdapter<>(this, FlightProfile.values()));
         profileSpinner.setSelection(1);
         profileSpinner.setBackgroundTintList(ColorStateList.valueOf(CYAN));
-        controls.addView(profileSpinner, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
-        heightText = text("VÝŠKOVÝ LIMIT – 15 m", 12, Color.WHITE, true);
+        controls.addView(profileSpinner, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
+        heightText = text("VÝŠKOVÝ LIMIT – 15 m", 11, Color.WHITE, true);
         controls.addView(heightText);
         heightSeek = new SeekBar(this);
         heightSeek.setMin(FlightLevel.MINIMUM_METERS);
@@ -251,13 +279,12 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             @Override public void onStopTrackingTouch(SeekBar seekBar) {}
         });
         controls.addView(heightSeek);
-        TextView levelHint = text("Volitelně po jednom metru. Jde o strop řízení, nikoli příkaz vystoupat.", 10, MUTED, false);
-        controls.addView(levelHint);
+        controls.addView(text("Strop řízení, nikoli příkaz vystoupat.", 9, MUTED, false));
 
         approvalCard = column();
-        approvalCard.setPadding(dp(10), dp(9), dp(10), dp(9));
+        approvalCard.setPadding(dp(9), dp(8), dp(9), dp(8));
         approvalCard.setBackground(card(Color.rgb(23, 57, 67), 10, CYAN));
-        pendingText = text("", 12, Color.WHITE, true);
+        pendingText = text("", 11, Color.WHITE, true);
         readinessCheck = new CheckBox(this);
         readinessCheck.setTextColor(Color.WHITE);
         readinessCheck.setButtonTintList(ColorStateList.valueOf(ORANGE));
@@ -275,20 +302,32 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         addGridButton(aircraftGrid, "VZLET", GREEN, () -> requestAircraftAction(PendingKind.TAKEOFF));
         addGridButton(aircraftGrid, "PŘISTÁNÍ", ORANGE, () -> requestAircraftAction(PendingKind.LANDING));
         addGridButton(aircraftGrid, "NÁVRAT DOMŮ", ORANGE, () -> requestAircraftAction(PendingKind.RETURN_HOME));
-        cancelActionButton = button("ZRUŠIT AUTO AKCI", RED, () -> dji.cancelAircraftAction(this::showCompletion));
+        cancelActionButton = button("ZRUŠIT AUTO AKCI", RED,
+            () -> dji.cancelAircraftAction(this::showCompletion));
         cancelActionButton.setEnabled(false);
         addGridView(aircraftGrid, cancelActionButton);
         controls.addView(aircraftGrid);
 
         LinearLayout stopRow = row();
-        Button hold = button("HOLD", ORANGE, this::hold);
-        Button abort = button("ABORT", RED, this::abort);
-        stopRow.addView(hold, weightedButtonParams());
-        stopRow.addView(abort, weightedButtonParams());
+        stopRow.addView(button("HOLD", ORANGE, this::hold), weightedButtonParams());
+        stopRow.addView(button("ABORT", RED, this::abort), weightedButtonParams());
         controls.addView(stopRow);
-        TextView safety = text("Kniply RC-N1 mají vždy přednost. Mini 2 nemá všesměrové vyhýbání překážkám; pilot odpovídá za volnou trasu.", 10, MUTED, false);
-        safety.setPadding(0, dp(6), 0, 0);
+        TextView safety = text("Kniply RC-N1 mají vždy přednost. Pilot odpovídá za volnou trasu.", 9, MUTED, false);
+        safety.setPadding(0, dp(5), 0, 0);
         controls.addView(safety);
+
+        LinearLayout quickBar = row();
+        quickBar.setPadding(dp(6), dp(4), dp(6), dp(5));
+        quickBar.setBackground(card(Color.argb(245, 5, 17, 24), 0, GREEN));
+        quickBar.addView(button("FOLLOW", PANEL_LIGHT, () -> requestMode(FlightMode.FOLLOW)), weightedButtonParams());
+        quickBar.addView(button("ORBIT", PANEL_LIGHT, () -> requestMode(FlightMode.ORBIT_RIGHT)), weightedButtonParams());
+        quickBar.addView(button("ROPE", PANEL_LIGHT, () -> requestMode(FlightMode.ROPE_MODE)), weightedButtonParams());
+        quickBar.addView(button("PULL", PANEL_LIGHT, () -> requestMode(FlightMode.PULL_AWAY)), weightedButtonParams());
+        quickBar.addView(button("ABORT", RED, this::abort), weightedButtonParams());
+        root.addView(quickBar, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(61), Gravity.BOTTOM));
+
+        setContentView(root);
     }
 
     private void addMode(GridLayout grid, FlightMode mode) {
@@ -478,10 +517,16 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         ui(() -> {
             String battery = value.batteryPercent < 0 ? "—" : value.batteryPercent + "%";
             String signal = value.signalPercent < 0 ? "—" : value.signalPercent + "%";
+            String position = value.hasAircraftLocation()
+                ? String.format(Locale.getDefault(), "%.5f, %.5f", value.aircraftLatitude, value.aircraftLongitude)
+                : "GPS —";
             telemetryText.setText(String.format(Locale.getDefault(),
-                "SDK %s   DRON %s   BATERIE %s   GNSS %d   SIGNÁL %s   VÝŠKA %.1f m   RYCHLOST %.1f m/s",
+                "SDK %s  DRON %s  BAT %s  GNSS %d  SIGNÁL %s\nALT %.1f m  SPD %.1f m/s  %s",
                 value.sdkRegistered ? "OK" : "—", value.connected ? "OK" : "—", battery,
-                value.satellites, signal, value.altitudeMeters, value.horizontalSpeedMetersPerSecond));
+                value.satellites, signal, value.altitudeMeters,
+                value.horizontalSpeedMetersPerSecond, position));
+            if (flightMap != null) flightMap.updateTelemetry(value);
+            if (flightRadar != null) flightRadar.updateTelemetry(value);
         });
     }
 
@@ -580,6 +625,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     @Override protected void onResume() {
         super.onResume();
+        if (flightMap != null) flightMap.onHostResume();
         sampling = true;
         main.removeCallbacks(frameSampler);
         main.post(frameSampler);
@@ -588,6 +634,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     @Override protected void onPause() {
         sampling = false;
         main.removeCallbacks(frameSampler);
+        if (flightMap != null) flightMap.onHostPause();
         if (runtime != null) runtime.hold("HOLD – aplikace není v popředí");
         super.onPause();
     }
@@ -600,6 +647,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     @Override protected void onDestroy() {
         sampling = false;
         main.removeCallbacksAndMessages(null);
+        if (flightMap != null) flightMap.onHostDestroy();
         if (tracker != null) tracker.close();
         if (runtime != null) runtime.close();
         if (dji != null) dji.close();
@@ -680,6 +728,12 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         button.setBackgroundTintList(ColorStateList.valueOf(color));
         button.setTextColor(color == CYAN || color == GREEN || color == ORANGE ? BACKGROUND : Color.WHITE);
         button.setAlpha(button.isEnabled() ? 1f : 0.45f);
+    }
+
+    private LinearLayout.LayoutParams compactButtonParams(int width) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(width, dp(36));
+        params.setMargins(dp(4), 0, 0, 0);
+        return params;
     }
 
     private LinearLayout.LayoutParams buttonParams() {
