@@ -96,7 +96,7 @@ struct DirectorView: View {
         HStack(spacing: 8) {
             Label("REAL FOOTAGE • CONTROL HUD DEMO", systemImage: "video.fill")
                 .font(.system(size: 9, weight: .bold, design: .rounded))
-                .foregroundStyle(.hudGreen)
+                .foregroundStyle(Color.hudGreen)
                 .lineLimit(1)
             Spacer()
             VStack(spacing: 0) {
@@ -111,7 +111,7 @@ struct DirectorView: View {
                 Circle().fill(.red).frame(width: 7, height: 7)
                 Text("REC 00:09")
                 Text("44%")
-                    .foregroundStyle(.hudGreen)
+                    .foregroundStyle(Color.hudGreen)
             }
             .font(.system(size: 9, weight: .bold, design: .monospaced))
         }
@@ -145,7 +145,7 @@ struct DirectorView: View {
                 Label("CHECKLIST", systemImage: "checklist")
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.hudGreen)
+            .foregroundStyle(Color.hudGreen)
 
             Spacer()
 
@@ -163,7 +163,7 @@ struct DirectorView: View {
                 Label("HOLD", systemImage: "pause.circle.fill")
             }
             .buttonStyle(.plain)
-            .foregroundStyle(session.state == .holding ? .hudGreen : .orange)
+            .foregroundStyle(session.state == .holding ? Color.hudGreen : .orange)
         }
         .font(.system(size: 10, weight: .bold, design: .rounded))
         .padding(.horizontal, 12)
@@ -226,7 +226,7 @@ private struct CompassView: View {
             Circle().stroke(.white.opacity(0.7), lineWidth: 1)
             Circle().stroke(.white.opacity(0.2), lineWidth: 8)
             Image(systemName: "location.north.fill")
-                .foregroundStyle(.hudGreen)
+                .foregroundStyle(Color.hudGreen)
                 .font(.system(size: 17))
             Text("N").font(.system(size: 8, weight: .bold, design: .monospaced)).offset(y: -25)
         }
@@ -243,7 +243,7 @@ private struct HUDCallout: View {
         VStack(spacing: 2) {
             Label(title, systemImage: "scope")
                 .font(.system(size: 13, weight: .bold, design: .rounded))
-                .foregroundStyle(.hudGreen)
+                .foregroundStyle(Color.hudGreen)
             Text(subtitle)
                 .font(.system(size: 8, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.75))
@@ -251,7 +251,7 @@ private struct HUDCallout: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
         .background(.black.opacity(0.68), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.hudGreen.opacity(0.75)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.hudGreen.opacity(0.75)))
     }
 }
 
@@ -266,13 +266,13 @@ private struct WorkerOverlay: View {
                 .font(.system(size: 9, weight: .black, design: .rounded))
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
-                .background(selected ? .hudGreen : .orange, in: RoundedRectangle(cornerRadius: 3))
+                .background(selected ? Color.hudGreen : .orange, in: RoundedRectangle(cornerRadius: 3))
                 .foregroundStyle(.black)
             RoundedRectangle(cornerRadius: 7)
-                .stroke(selected ? .hudGreen : .yellow, lineWidth: primary ? 3 : 2)
+                .stroke(selected ? Color.hudGreen : .yellow, lineWidth: primary ? 3 : 2)
                 .frame(width: 92, height: 134)
         }
-        .shadow(color: selected ? .hudGreen.opacity(0.8) : .clear, radius: 8)
+        .shadow(color: selected ? Color.hudGreen.opacity(0.8) : .clear, radius: 8)
     }
 }
 
@@ -290,7 +290,7 @@ private struct TrajectoryPreview: View {
             }
             path.move(to: points[0])
             for point in points.dropFirst() { path.addLine(to: point) }
-            context.stroke(path, with: .color(.hudGreen.opacity(0.8)), style: StrokeStyle(lineWidth: 2, dash: [7, 6]))
+            context.stroke(path, with: .color(Color.hudGreen.opacity(0.8)), style: StrokeStyle(lineWidth: 2, dash: [7, 6]))
 
             let x = size.width * (0.08 + phase * 0.84)
             let y = size.height * (0.78 - sin(phase * .pi) * 0.50)
@@ -315,7 +315,7 @@ private struct MiniMapView: View {
                 road.addLine(to: CGPoint(x: size.width - 10, y: 8))
                 context.stroke(road, with: .color(.white.opacity(0.35)), lineWidth: 2)
                 let point = CGPoint(x: 10 + phase * (size.width - 20), y: size.height - 12 - phase * (size.height - 25))
-                context.fill(Path(ellipseIn: CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8)), with: .color(.hudGreen))
+                context.fill(Path(ellipseIn: CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8)), with: .color(Color.hudGreen))
             }
         }
         .frame(width: 96, height: 72)
@@ -331,7 +331,7 @@ private struct SafetyCard: View {
         VStack(alignment: .leading, spacing: 3) {
             Label(state == .aborted ? "ABORT" : "PILOT SAFE", systemImage: state == .aborted ? "xmark.octagon.fill" : "checkmark.shield.fill")
                 .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(state == .aborted ? .red : .hudGreen)
+                .foregroundStyle(state == .aborted ? .red : Color.hudGreen)
             Text(telemetry.rcOverrideActive ? "RC-N1 override active" : "Manual override ready")
             Text(telemetry.linkHealthy ? "Link healthy" : "Link lost")
             Text(telemetry.obstacleWarning ? "Obstacle warning" : "Obstacle scan pending")
@@ -341,7 +341,7 @@ private struct SafetyCard: View {
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.hudGreen.opacity(0.45)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.hudGreen.opacity(0.45)))
     }
 }
 
@@ -362,7 +362,7 @@ private struct HUDSideButton: View {
 private struct HUDModeButton: View {
     let title: String
     let icon: String
-    var color: Color = .hudGreen
+    var color: Color = Color.hudGreen
     let action: () -> Void
 
     var body: some View {
