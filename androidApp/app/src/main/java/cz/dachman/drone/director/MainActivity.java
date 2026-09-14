@@ -33,7 +33,7 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import java.util.Locale;
 
-/** Portrait, camera-first flight console for supervised DJI Mini 2 filming. */
+/** Landscape, camera-first flight console for supervised DJI Mini 2 filming. */
 public final class MainActivity extends Activity implements DroneSession.Listener,
         WorkerTracker.Listener, FlightRuntime.Listener, TextureView.SurfaceTextureListener {
     private static final int BACKGROUND = Color.rgb(5, 17, 24);
@@ -47,10 +47,12 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private static final int DJI_PERMISSION_REQUEST = 2107;
     private static final int FRAME_WIDTH = 384;
     private static final int FRAME_HEIGHT = 216;
+    private static final int LANDSCAPE_SIDEBAR_DP = 330;
 
     private enum PendingKind { NONE, MODE, TAKEOFF, LANDING, RETURN_HOME, FULL_MISSION }
 
     private final ApprovalGate gate = new ApprovalGate();
+    private final ControlAuthority authority = new ControlAuthority();
     private final Handler main = new Handler(Looper.getMainLooper());
     private CancellationSignal authentication;
     private DjiConnection dji;
@@ -72,6 +74,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private TextView commandText;
     private TextView pendingText;
     private TextView aircraftActionText;
+    private TextView authorityText;
     private LinearLayout approvalCard;
     private CheckBox readinessCheck;
     private Button approveButton;
@@ -79,6 +82,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private Button workerTwoButton;
     private Button recordButton;
     private Button cancelActionButton;
+    private Button rearmAiButton;
     private Spinner profileSpinner;
     private SeekBar heightSeek;
     private PendingKind pendingKind = PendingKind.NONE;
@@ -153,9 +157,15 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(BACKGROUND);
 
+        FrameLayout cameraArea = new FrameLayout(this);
+        FrameLayout.LayoutParams cameraAreaParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.LEFT);
+        cameraAreaParams.setMargins(0, 0, dp(LANDSCAPE_SIDEBAR_DP), 0);
+        root.addView(cameraArea, cameraAreaParams);
+
         FrameLayout videoFrame = new FrameLayout(this);
         videoFrame.setBackgroundColor(Color.BLACK);
-        root.addView(videoFrame, new FrameLayout.LayoutParams(
+        cameraArea.addView(videoFrame, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         video = new TextureView(this);
@@ -200,7 +210,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
         FrameLayout.LayoutParams topParams = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(56), Gravity.TOP);
-        root.addView(topHud, topParams);
+        cameraArea.addView(topHud, topParams);
 
         telemetryText = text("SDK —  DRON —  BATERIE —  GNSS —  VÝŠKA —", 10, Color.WHITE, true);
         telemetryText.setGravity(Gravity.CENTER_VERTICAL);
@@ -210,27 +220,37 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         FrameLayout.LayoutParams telemetryParams = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(48), Gravity.TOP);
         telemetryParams.setMargins(dp(8), dp(62), dp(8), 0);
-        root.addView(telemetryText, telemetryParams);
+        cameraArea.addView(telemetryText, telemetryParams);
+
+        authorityText = text("[MANUAL] → AI PŘIPRAVENA → AI AKTIVNÍ → PILOT PŘEVZAL → RTH",
+            9, Color.WHITE, true);
+        authorityText.setGravity(Gravity.CENTER);
+        authorityText.setMaxLines(2);
+        authorityText.setBackground(card(Color.argb(225, 5, 17, 24), 8, CYAN));
+        FrameLayout.LayoutParams authorityParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(38), Gravity.TOP);
+        authorityParams.setMargins(dp(8), dp(114), dp(8), 0);
+        cameraArea.addView(authorityText, authorityParams);
 
         flightRadar = new FlightRadarView(this);
         FrameLayout.LayoutParams radarParams = new FrameLayout.LayoutParams(
-            dp(94), dp(106), Gravity.TOP | Gravity.RIGHT);
-        radarParams.setMargins(0, dp(116), dp(9), 0);
-        root.addView(flightRadar, radarParams);
+            dp(92), dp(100), Gravity.TOP | Gravity.RIGHT);
+        radarParams.setMargins(0, dp(158), dp(9), 0);
+        cameraArea.addView(flightRadar, radarParams);
 
         flightMap = new FlightMapView(this);
         FrameLayout.LayoutParams mapParams = new FrameLayout.LayoutParams(
             dp(142), dp(112), Gravity.BOTTOM | Gravity.LEFT);
-        mapParams.setMargins(dp(9), 0, 0, dp(316));
-        root.addView(flightMap, mapParams);
+        mapParams.setMargins(dp(9), 0, 0, dp(66));
+        cameraArea.addView(flightMap, mapParams);
 
         flightPath = new FlightPathView(this);
         flightPath.setAlpha(0.94f);
         flightPath.setBackground(card(Color.argb(225, 5, 17, 24), 10, CYAN));
         FrameLayout.LayoutParams pathParams = new FrameLayout.LayoutParams(
             dp(174), dp(112), Gravity.BOTTOM | Gravity.RIGHT);
-        pathParams.setMargins(0, 0, dp(9), dp(316));
-        root.addView(flightPath, pathParams);
+        pathParams.setMargins(0, 0, dp(9), dp(66));
+        cameraArea.addView(flightPath, pathParams);
 
         ScrollView controlScroll = new ScrollView(this);
         controlScroll.setFillViewport(true);
@@ -240,8 +260,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         controls.setBackground(card(Color.argb(235, 5, 17, 24), 12, PANEL_LIGHT));
         controlScroll.addView(controls);
         FrameLayout.LayoutParams controlParams = new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(248), Gravity.BOTTOM);
-        controlParams.setMargins(dp(7), 0, dp(7), dp(61));
+            dp(LANDSCAPE_SIDEBAR_DP), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.RIGHT);
+        controlParams.setMargins(dp(4), dp(4), dp(4), dp(4));
         root.addView(controlScroll, controlParams);
 
         LinearLayout statePanel = column();
@@ -270,6 +290,11 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         controls.addView(workerRow);
         Button clearWorkers = button("ZRUŠIT VÝBĚR PRACOVNÍKŮ", PANEL_LIGHT, () -> {
             tracker.clearSelections();
+            missionActive = false;
+            main.removeCallbacks(missionPrompt);
+            if (runtime != null) runtime.hold("Cíl zrušen – HOLD");
+            authority.stopToManual();
+            updateAuthorityUi();
             invalidatePending("Výběr cílů zrušen – HOLD");
         });
         controls.addView(clearWorkers, fullButtonParams());
@@ -342,6 +367,10 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         addGridView(aircraftGrid, cancelActionButton);
         controls.addView(aircraftGrid);
 
+        rearmAiButton = button("RUČNĚ PŘIPRAVIT AI ZNOVU", CYAN, this::confirmAiRearm);
+        rearmAiButton.setVisibility(View.GONE);
+        controls.addView(rearmAiButton, fullButtonParams());
+
         LinearLayout stopRow = row();
         stopRow.addView(button("HOLD", ORANGE, this::hold), weightedButtonParams());
         stopRow.addView(button("ABORT", RED, this::abort), weightedButtonParams());
@@ -358,10 +387,11 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         quickBar.addView(button("ROPE", PANEL_LIGHT, () -> requestMode(FlightMode.ROPE_MODE)), weightedButtonParams());
         quickBar.addView(button("PULL", PANEL_LIGHT, () -> requestMode(FlightMode.PULL_AWAY)), weightedButtonParams());
         quickBar.addView(button("ABORT", RED, this::abort), weightedButtonParams());
-        root.addView(quickBar, new FrameLayout.LayoutParams(
+        cameraArea.addView(quickBar, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(61), Gravity.BOTTOM));
 
         setContentView(root);
+        updateAuthorityUi();
     }
 
     private void addMode(GridLayout grid, FlightMode mode) {
@@ -384,12 +414,18 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private void requestMode(FlightMode mode) {
         if (tracker == null) return;
         TrackingSnapshot snapshot = tracker.snapshot();
+        if (authority.manualRearmRequired()) {
+            showStatus("Pilot převzal řízení. Nejdřív stiskni RUČNĚ PŘIPRAVIT AI ZNOVU.");
+            return;
+        }
         if (!snapshot.hasRequiredTargets(mode)) {
             showStatus(mode.requiresSecondary
                 ? "Nejprve označ Worker 1 i Worker 2 v živém obrazu."
                 : "Nejprve označ Worker 1 v živém obrazu.");
             return;
         }
+        authority.targetConfirmed(true);
+        updateAuthorityUi();
         if (runtime.isActive()) runtime.hold("Změna manévru – HOLD");
         invalidatePending(null);
         FlightProfile profile = (FlightProfile) profileSpinner.getSelectedItem();
@@ -429,10 +465,16 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     }
 
     private void requestFullMission() {
+        if (authority.manualRearmRequired()) {
+            showStatus("Pilot převzal řízení. Nejdřív stiskni RUČNĚ PŘIPRAVIT AI ZNOVU.");
+            return;
+        }
         if (tracker == null || !tracker.snapshot().hasRequiredTargets(FlightMode.FOLLOW)) {
             showStatus("Nejprve označ a potvrď Worker 1 v živém obrazu.");
             return;
         }
+        authority.targetConfirmed(true);
+        updateAuthorityUi();
         if (runtime != null && runtime.isActive()) runtime.abort("Příprava mise – HOLD");
         invalidatePending(null);
         pendingKind = PendingKind.FULL_MISSION;
@@ -445,6 +487,17 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             FlightLevel.ofMeters(heightSeek.getProgress()), (FlightProfile)profileSpinner.getSelectedItem()));
         updateApprovalButton();
         showStatus("Před startem potvrď volný prostor, baterii, GPS a přímý dohled.");
+    }
+
+    private void confirmAiRearm() {
+        boolean targetAvailable = tracker != null
+            && tracker.snapshot().hasRequiredTargets(FlightMode.FOLLOW);
+        if (!authority.confirmManualRearm(targetAvailable)) {
+            showStatus("AI nelze připravit. Znovu označ Worker 1 a ověř živý obraz.");
+            return;
+        }
+        updateAuthorityUi();
+        showStatus("AI je znovu připravena. Každý další manévr musíš ručně potvrdit.");
     }
 
     private void authenticate() {
@@ -489,13 +542,27 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     private void executeApproved(PendingKind kind, FlightPlan plan) {
         if (kind == PendingKind.MODE && plan != null) {
+            if (!authority.activateAi()) {
+                showStatus("AI řízení není připravené. Aktivuj je znovu ručně v APK.");
+                updateAuthorityUi();
+                return;
+            }
+            updateAuthorityUi();
             runtime.start(plan, (success, message) -> {
                 showCompletion(success, message);
-                if (!success || !missionActive) return;
+                if (!success) {
+                    authority.stopToManual();
+                    updateAuthorityUi();
+                    missionActive = false;
+                    return;
+                }
+                if (!missionActive) return;
                 // Keep each shot bounded; then stop, re-check the target and ask for the next approval.
                 main.postDelayed(() -> {
                     if (!missionActive) return;
                     runtime.hold("Kompozice dokončena – HOLD před dalším záběrem");
+                    authority.compositionCompleted();
+                    updateAuthorityUi();
                     missionIndex++;
                     if (missionIndex < missionModes.length) {
                         main.postDelayed(missionPrompt, 900L);
@@ -514,7 +581,15 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             dji.startLanding(this::showCompletion);
         } else if (kind == PendingKind.RETURN_HOME) {
             runtime.abort("Návrat domů – Virtual Stick vypnut");
-            dji.startReturnHome(this::showCompletion);
+            authority.beginRth(true);
+            updateAuthorityUi();
+            dji.startReturnHome((success, message) -> {
+                showCompletion(success, message);
+                if (!success) {
+                    authority.finishRth();
+                    updateAuthorityUi();
+                }
+            });
         } else if (kind == PendingKind.FULL_MISSION) {
             missionActive = true;
             missionIndex = 0;
@@ -530,7 +605,10 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private void selectTarget(float x, float y, int slot) {
         if (tracker == null) return;
         if (tracker.selectAt(slot, x, y)) {
-            invalidatePending("Worker " + slot + " potvrzen; případný starý manévr byl zrušen.");
+            boolean ready = slot != 1 || authority.targetConfirmed(true);
+            updateAuthorityUi();
+            invalidatePending("Worker " + slot + " potvrzen; "
+                + (ready ? "AI je připravena." : "pilotní převzetí zůstává uzamčené."));
             if (slot == 1 && tracker.snapshot().secondary == null) selectWorkerSlot(2);
         } else {
             showStatus("V místě klepnutí není jednoznačně rozpoznaná osoba.");
@@ -549,6 +627,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         main.removeCallbacks(missionPrompt);
         invalidatePending(null);
         if (runtime != null) runtime.hold("HOLD – AI řízení vypnuto");
+        authority.stopToManual();
+        updateAuthorityUi();
         showStatus("HOLD – dron drží pilot nebo letový kontrolér DJI.");
     }
 
@@ -557,6 +637,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         main.removeCallbacks(missionPrompt);
         invalidatePending(null);
         if (runtime != null) runtime.abort("ABORT – AI řízení vypnuto");
+        authority.stopToManual();
+        updateAuthorityUi();
         if (aircraftActionActive) dji.cancelAircraftAction(this::showCompletion);
         else showStatus("ABORT – AI řízení je vypnuté.");
     }
@@ -625,7 +707,11 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     @Override public void onPilotOverride(String reason) {
         ui(() -> {
+            missionActive = false;
+            main.removeCallbacks(missionPrompt);
             invalidatePending(null);
+            authority.pilotTookOver();
+            updateAuthorityUi();
             runtime.abort(reason);
             showStatus(reason);
         });
@@ -641,6 +727,12 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     @Override public void onAircraftAction(String action, boolean active) {
         aircraftActionActive = active;
         ui(() -> {
+            if (active && action.contains("NÁVRAT DOMŮ")) {
+                authority.beginRth(true);
+            } else if (!active && authority.state() == ControlAuthority.State.RTH) {
+                authority.finishRth();
+            }
+            updateAuthorityUi();
             aircraftActionText.setText("AUTOMATICKÁ AKCE: " + action);
             aircraftActionText.setTextColor(active ? ORANGE : MUTED);
             cancelActionButton.setEnabled(active);
@@ -674,6 +766,15 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     @Override public void onRuntimeState(boolean active, String message, FlightCommand command) {
         ui(() -> {
+            if (!active && authority.state() == ControlAuthority.State.AI_ACTIVE) {
+                if (message.startsWith("Kompozice dokončena")) authority.compositionCompleted();
+                else {
+                    missionActive = false;
+                    main.removeCallbacks(missionPrompt);
+                    authority.stopToManual();
+                }
+                updateAuthorityUi();
+            }
             statusText.setText(message);
             statusText.setTextColor(active ? GREEN : ORANGE);
             commandText.setText(String.format(Locale.getDefault(),
@@ -717,8 +818,12 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     @Override protected void onPause() {
         sampling = false;
         main.removeCallbacks(frameSampler);
+        missionActive = false;
+        main.removeCallbacks(missionPrompt);
         if (flightMap != null) flightMap.onHostPause();
         if (runtime != null) runtime.hold("HOLD – aplikace není v popředí");
+        authority.stopToManual();
+        updateAuthorityUi();
         super.onPause();
     }
 
@@ -741,6 +846,29 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         ui(() -> {
             if (statusText != null) statusText.setText(message);
             if (connectionText != null) connectionText.setText(message);
+        });
+    }
+
+    private void updateAuthorityUi() {
+        ui(() -> {
+            ControlAuthority.State current = authority.state();
+            StringBuilder chain = new StringBuilder();
+            for (ControlAuthority.State state : ControlAuthority.State.values()) {
+                if (chain.length() > 0) chain.append("  →  ");
+                if (state == current) chain.append('[').append(state.label).append(']');
+                else chain.append(state.label);
+            }
+            if (authorityText != null) {
+                authorityText.setText(chain.toString());
+                int color = current == ControlAuthority.State.AI_ACTIVE ? GREEN
+                    : current == ControlAuthority.State.PILOT_TAKEOVER ? RED
+                    : current == ControlAuthority.State.RTH ? ORANGE : CYAN;
+                authorityText.setTextColor(color);
+                authorityText.setBackground(card(Color.argb(225, 5, 17, 24), 8, color));
+            }
+            if (rearmAiButton != null) {
+                rearmAiButton.setVisibility(authority.manualRearmRequired() ? View.VISIBLE : View.GONE);
+            }
         });
     }
 
