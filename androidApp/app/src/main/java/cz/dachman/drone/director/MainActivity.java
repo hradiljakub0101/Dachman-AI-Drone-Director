@@ -2,6 +2,7 @@ package cz.dachman.drone.director;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
@@ -10,6 +11,7 @@ import android.graphics.SurfaceTexture;
 import android.graphics.drawable.GradientDrawable;
 import android.hardware.biometrics.BiometricManager;
 import android.hardware.biometrics.BiometricPrompt;
+import android.hardware.usb.UsbManager;
 import android.os.Bundle;
 import android.os.CancellationSignal;
 import android.os.Handler;
@@ -113,7 +115,21 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         tracker = new WorkerTracker(this, this);
         dji.setListener(this);
         if (video.isAvailable()) dji.attachVideo(video.getSurfaceTexture(), video.getWidth(), video.getHeight());
-        dji.connect();
+        if (!handleUsbIntent(getIntent())) dji.connect();
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (!handleUsbIntent(intent) && dji != null) dji.connect();
+    }
+
+    private boolean handleUsbIntent(Intent intent) {
+        if (intent == null || !UsbManager.ACTION_USB_ACCESSORY_ATTACHED.equals(intent.getAction())) {
+            return false;
+        }
+        if (dji != null) dji.onUsbAccessoryAttached();
+        return true;
     }
 
     private void buildInterface() {

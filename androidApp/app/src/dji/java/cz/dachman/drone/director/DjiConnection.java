@@ -2,12 +2,17 @@ package cz.dachman.drone.director;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.Context;
+import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.graphics.SurfaceTexture;
+import android.hardware.usb.UsbAccessory;
+import android.hardware.usb.UsbManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import java.util.ArrayList;
 import java.util.List;
 import dji.common.Stick;
@@ -45,6 +50,11 @@ final class DjiConnection implements DroneSession {
     static final int PERMISSION_REQUEST = 2107;
     private static final int RC_DEAD_ZONE = 80;
     private static final long GIMBAL_INTERVAL_MILLIS = 180L;
+    private static final long CONNECTION_RETRY_MILLIS = 1_500L;
+    private static final int MAX_CONNECTION_ATTEMPTS = 20;
+    private static final long VIDEO_WATCHDOG_MILLIS = 2_500L;
+    private static final long VIDEO_STALE_MILLIS = 5_000L;
+    private static final int MAX_VIDEO_RESTARTS = 3;
 
     private enum AircraftAction {
         NONE("ŽÁDNÁ"), TAKEOFF("AUTONOMNÍ VZLET"), LANDING("AUTONOMNÍ PŘISTÁNÍ"), RETURN_HOME("NÁVRAT DOMŮ");
@@ -62,8 +72,10 @@ final class DjiConnection implements DroneSession {
     private boolean manualDeflection;
     private boolean pilotOverridePending;
     private boolean recording;
-    private boolean videoActive;
+    private volatile boolean videoActive;
     private boolean compatibleModel;
+    private boolean djiUsbVisible;
+    private int connectionAttempts;
     private int batteryPercent = -1;
     private int signalPercent = -1;
     private FlightControllerState lastFlightState;
@@ -80,14 +92,54 @@ final class DjiConnection implements DroneSession {
     private int surfaceWidth;
     private int surfaceHeight;
     private long lastGimbalAt;
+    private volatile long lastVideoPacketAt;
+    private volatile int videoRestartAttempts;
     private volatile AircraftAction aircraftAction = AircraftAction.NONE;
     private volatile long aircraftActionStartedAt;
     private volatile boolean landingConfirmationSent;
 
+    private final Runnable connectionRetry = new Runnable() {
+        @Override public void run() {
+            synchronized (DjiConnection.this) {
+                if (closed || !registered || productConnected()) return;
+                startProductConnection(false);
+            }
+        }
+    };
+
+    private final Runnable videoWatchdog = new Runnable() {
+        @Override public void run() {
+            synchronized (DjiConnection.this) {
+                if (closed || aircraft == null || !aircraft.isConnected()
+                        || surfaceTexture == null || codec == null) return;
+                long idle = SystemClock.elapsedRealtime() - lastVideoPacketAt;
+                if (idle >= VIDEO_STALE_MILLIS) {
+                    if (videoRestartAttempts >= MAX_VIDEO_RESTARTS) {
+                        postStatus("RC-N1 i kamera jsou připojené, ale nepřichází živý obraz. Zkontroluj přenos v DJI Fly a připoj USB znovu.");
+                        return;
+                    }
+                    videoRestartAttempts++;
+                    restartVideoPipeline();
+                    return;
+                }
+                main.postDelayed(this, VIDEO_WATCHDOG_MILLIS);
+            }
+        }
+    };
+
     private final VideoFeeder.VideoDataListener videoDataListener = (bytes, size) -> {
+        if (bytes == null || size <= 0) return;
+        lastVideoPacketAt = SystemClock.elapsedRealtime();
+        videoRestartAttempts = 0;
         DJICodecManager current = codec;
-        if (current != null && bytes != null && size > 0) current.sendDataToDecoder(bytes, size);
-        if (!videoActive && size > 0) {
+        if (current != null) {
+            try {
+                current.sendDataToDecoder(bytes, size);
+            } catch (RuntimeException error) {
+                postStatus("Chyba dekódování živého obrazu: " + safeError(error));
+            }
+        }
+        if (!videoActive) {
             videoActive = true;
             postVideo(true);
         }
@@ -119,10 +171,7 @@ final class DjiConnection implements DroneSession {
             return;
         }
         if (registered) {
-            postStatus("DJI SDK je připravené; hledám ovladač a Mini 2…");
-            DJISDKManager.getInstance().startConnectionToProduct();
-            BaseProduct current = DJISDKManager.getInstance().getProduct();
-            if (current != null && current.isConnected()) bindProduct(current);
+            startProductConnection(true);
             return;
         }
         if (registering) {
@@ -140,14 +189,16 @@ final class DjiConnection implements DroneSession {
             registered = error == DJISDKError.REGISTRATION_SUCCESS;
             postTelemetry();
             if (registered) {
-                postStatus("DJI registrace je hotová; připojuji ovladač…");
-                DJISDKManager.getInstance().startConnectionToProduct();
+                startProductConnection(true);
             } else {
                 postStatus("Registrace DJI selhala: " + errorText(error));
             }
         }
 
-        @Override public void onProductDisconnect() { releaseProduct("Mini 2 bylo odpojeno."); }
+        @Override public void onProductDisconnect() {
+            releaseProduct("Mini 2 bylo odpojeno; čekám na obnovení spojení…");
+            startProductConnection(true);
+        }
         @Override public void onProductConnect(BaseProduct product) { bindProduct(product); }
         @Override public void onProductChanged(BaseProduct product) { bindProduct(product); }
 
@@ -164,8 +215,78 @@ final class DjiConnection implements DroneSession {
         @Override public void onDatabaseDownloadProgress(long current, long total) {}
     };
 
+    @Override public synchronized void onUsbAccessoryAttached() {
+        if (closed) return;
+        djiUsbVisible = true;
+        connectionAttempts = 0;
+        main.removeCallbacks(connectionRetry);
+        activity.sendBroadcast(new Intent(DJISDKManager.USB_ACCESSORY_ATTACHED));
+        postStatus("Android rozpoznal USB ovladač DJI; navazuji spojení…");
+        main.postDelayed(() -> {
+            if (registered) startProductConnection(true);
+            else connect();
+        }, 250L);
+    }
+
+    private synchronized void startProductConnection(boolean resetAttempts) {
+        if (closed || !registered) return;
+        BaseProduct current = DJISDKManager.getInstance().getProduct();
+        if (current != null && current.isConnected()) {
+            bindProduct(current);
+            return;
+        }
+        if (resetAttempts) {
+            connectionAttempts = 0;
+            main.removeCallbacks(connectionRetry);
+        }
+        if (connectionAttempts >= MAX_CONNECTION_ATTEMPTS) {
+            postStatus("RC-N1 nebyl nalezen. Znovu připoj datový kabel a jako USB aplikaci zvol Dachman AI.");
+            return;
+        }
+        connectionAttempts++;
+        boolean usbWasVisible = djiUsbVisible;
+        djiUsbVisible = hasDjiUsbAccessory();
+        boolean started;
+        try {
+            started = DJISDKManager.getInstance().startConnectionToProduct();
+        } catch (RuntimeException error) {
+            started = false;
+            postStatus("DJI spojení nelze spustit: " + safeError(error));
+        }
+        if (resetAttempts || usbWasVisible != djiUsbVisible || connectionAttempts == 1) {
+            if (djiUsbVisible) {
+                postStatus("USB RC-N1 je dostupné; čekám na spojení s DJI Mini 2…");
+            } else if (started) {
+                postStatus("DJI SDK je připravené; čekám na USB RC-N1 a Mini 2…");
+            } else {
+                postStatus("Android zatím nepředal USB RC-N1. Připoj kabel znovu a zvol Dachman AI.");
+            }
+        }
+        main.removeCallbacks(connectionRetry);
+        main.postDelayed(connectionRetry, CONNECTION_RETRY_MILLIS);
+    }
+
+    private boolean productConnected() {
+        BaseProduct current = DJISDKManager.getInstance().getProduct();
+        return current != null && current.isConnected();
+    }
+
+    private boolean hasDjiUsbAccessory() {
+        UsbManager manager = (UsbManager) activity.getSystemService(Context.USB_SERVICE);
+        if (manager == null) return false;
+        UsbAccessory[] accessories = manager.getAccessoryList();
+        if (accessories == null) return false;
+        for (UsbAccessory accessory : accessories) {
+            if (accessory != null && "DJI".equalsIgnoreCase(accessory.getManufacturer())) return true;
+        }
+        return false;
+    }
+
     private synchronized void bindProduct(BaseProduct product) {
         if (closed) return;
+        main.removeCallbacks(connectionRetry);
+        connectionAttempts = 0;
+        djiUsbVisible = true;
         unbindCallbacks();
         if (!(product instanceof Aircraft) || !product.isConnected()) {
             aircraft = null;
@@ -198,9 +319,11 @@ final class DjiConnection implements DroneSession {
             recording = state.isRecording();
             postCamera(recording);
         });
+        videoRestartAttempts = 0;
         startVideoFeed();
         postStatus(compatibleModel
-            ? "DJI Mini 2 je připojený. Zkontroluj prostor a vyber požadovanou akci."
+            ? "DJI Mini 2 připojen • RC-N1 " + componentState(remoteController)
+                + " • kamera " + componentState(camera) + " • čekám na živý obraz."
             : "Připojený model není DJI Mini 2; živé řízení je uzamčeno.");
         postTelemetry();
     }
@@ -268,15 +391,34 @@ final class DjiConnection implements DroneSession {
         surfaceTexture = texture;
         surfaceWidth = Math.max(1, width);
         surfaceHeight = Math.max(1, height);
+        videoRestartAttempts = 0;
+        main.removeCallbacks(videoWatchdog);
         destroyCodecOnly();
-        codec = new DJICodecManager(activity, texture, surfaceWidth, surfaceHeight);
+        try {
+            codec = new DJICodecManager(activity, texture, surfaceWidth, surfaceHeight);
+        } catch (RuntimeException error) {
+            codec = null;
+            postStatus("Video dekodér DJI nelze spustit: " + safeError(error));
+            return;
+        }
         startVideoFeed();
     }
 
     private synchronized void startVideoFeed() {
-        if (surfaceTexture == null || codec == null || aircraft == null) return;
-        VideoFeeder.VideoFeed next = VideoFeeder.getInstance().getPrimaryVideoFeed();
-        if (videoFeed == next) return;
+        if (surfaceTexture == null || codec == null || aircraft == null || !aircraft.isConnected()) return;
+        VideoFeeder.VideoFeed next;
+        try {
+            next = VideoFeeder.getInstance().getPrimaryVideoFeed();
+        } catch (RuntimeException error) {
+            postStatus("Video feed DJI není dostupný: " + safeError(error));
+            return;
+        }
+        if (next == null) {
+            postStatus("DJI zatím neposkytlo primární video feed; čekám na kameru…");
+            main.removeCallbacks(videoWatchdog);
+            main.postDelayed(videoWatchdog, VIDEO_WATCHDOG_MILLIS);
+            return;
+        }
         if (videoFeed != null) {
             videoFeed.removeVideoDataListener(videoDataListener);
             videoFeed.removeVideoActiveStatusListener(videoStatusListener);
@@ -284,15 +426,42 @@ final class DjiConnection implements DroneSession {
         videoFeed = next;
         videoFeed.addVideoDataListener(videoDataListener);
         videoFeed.addVideoActiveStatusListener(videoStatusListener);
+        videoActive = false;
+        lastVideoPacketAt = SystemClock.elapsedRealtime();
+        postVideo(false);
+        main.removeCallbacks(videoWatchdog);
+        main.postDelayed(videoWatchdog, VIDEO_WATCHDOG_MILLIS);
     }
 
-    @Override public synchronized void detachVideo() {
+    private synchronized void restartVideoPipeline() {
+        if (closed || surfaceTexture == null || aircraft == null || !aircraft.isConnected()) return;
         if (videoFeed != null) {
             videoFeed.removeVideoDataListener(videoDataListener);
             videoFeed.removeVideoActiveStatusListener(videoStatusListener);
             videoFeed = null;
         }
         videoActive = false;
+        postVideo(false);
+        destroyCodecOnly();
+        try {
+            codec = new DJICodecManager(activity, surfaceTexture, surfaceWidth, surfaceHeight);
+            postStatus("Obnovuji živý obraz z kamery DJI…");
+            startVideoFeed();
+        } catch (RuntimeException error) {
+            codec = null;
+            postStatus("Obnovení video dekodéru selhalo: " + safeError(error));
+        }
+    }
+
+    @Override public synchronized void detachVideo() {
+        main.removeCallbacks(videoWatchdog);
+        if (videoFeed != null) {
+            videoFeed.removeVideoDataListener(videoDataListener);
+            videoFeed.removeVideoActiveStatusListener(videoStatusListener);
+            videoFeed = null;
+        }
+        videoActive = false;
+        videoRestartAttempts = 0;
         destroyCodecOnly();
         surfaceTexture = null;
         postVideo(false);
@@ -557,6 +726,7 @@ final class DjiConnection implements DroneSession {
 
     private synchronized void releaseProduct(String message) {
         virtualStickEnabled = false;
+        main.removeCallbacks(videoWatchdog);
         unbindCallbacks();
         aircraft = null;
         flightController = null;
@@ -688,8 +858,19 @@ final class DjiConnection implements DroneSession {
         return description == null || description.trim().isEmpty() ? error.toString() : description;
     }
 
+    private static String safeError(RuntimeException error) {
+        String message = error.getMessage();
+        return message == null || message.trim().isEmpty() ? error.getClass().getSimpleName() : message;
+    }
+
+    private static String componentState(BaseComponent component) {
+        return component != null && component.isConnected() ? "OK" : "čeká";
+    }
+
     @Override public synchronized void close() {
         if (closed) return;
+        main.removeCallbacks(connectionRetry);
+        main.removeCallbacks(videoWatchdog);
         if (virtualStickEnabled && flightController != null) {
             flightController.sendVirtualStickFlightControlData(new FlightControlData(0f, 0f, 0f, 0f), null);
             flightController.setVirtualStickAdvancedModeEnabled(false);
