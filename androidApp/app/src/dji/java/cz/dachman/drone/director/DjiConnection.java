@@ -21,6 +21,7 @@ import dji.common.flightcontroller.virtualstick.FlightCoordinateSystem;
 import dji.common.flightcontroller.virtualstick.RollPitchControlMode;
 import dji.common.flightcontroller.virtualstick.VerticalControlMode;
 import dji.common.flightcontroller.virtualstick.YawControlMode;
+import dji.common.model.LocationCoordinate2D;
 import dji.common.gimbal.Rotation;
 import dji.common.gimbal.RotationMode;
 import dji.common.product.Model;
@@ -602,10 +603,18 @@ final class DjiConnection implements DroneSession {
         }
         float horizontal = (float)Math.hypot(state.getVelocityX(), state.getVelocityY());
         String wind = state.getFlightWindWarning() == null ? "UNKNOWN" : state.getFlightWindWarning().name();
+        LocationCoordinate3D aircraftLocation = state.getAircraftLocation();
+        LocationCoordinate2D homeLocation = state.getHomeLocation();
+        double aircraftLatitude = aircraftLocation == null ? Double.NaN : aircraftLocation.getLatitude();
+        double aircraftLongitude = aircraftLocation == null ? Double.NaN : aircraftLocation.getLongitude();
+        double homeLatitude = homeLocation == null ? Double.NaN : homeLocation.getLatitude();
+        double homeLongitude = homeLocation == null ? Double.NaN : homeLocation.getLongitude();
+        float heading = state.getAttitude() == null ? 0f : (float)state.getAttitude().yaw;
         return new TelemetrySnapshot(registered, connected, product, state.getFlightModeString(),
             batteryPercent, state.getSatelliteCount(), altitude(state), horizontal, state.getVelocityZ(),
             signalPercent, state.areMotorsOn(), state.isFlying(), state.isFailsafeEnabled(),
-            state.isGoingHome(), wind);
+            state.isGoingHome(), wind, aircraftLatitude, aircraftLongitude, homeLatitude, homeLongitude,
+            heading, state.isHomeLocationSet());
     }
 
     private static float altitude(FlightControllerState state) {
