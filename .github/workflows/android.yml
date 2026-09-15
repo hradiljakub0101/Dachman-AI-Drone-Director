@@ -39,6 +39,8 @@ jobs:
         run: python3 scripts/verify_android_launcher_icon.py
       - name: Verify camera recording integration
         run: python3 scripts/verify_android_recording_integration.py
+      - name: Verify Home Point and automatic RTH integration
+        run: python3 scripts/verify_android_rth_integration.py
       - name: Test and build demo and DJI debug APKs
         working-directory: androidApp
         env:
@@ -92,8 +94,8 @@ jobs:
         shell: bash
         run: |
           if gh release view "$release_tag" >/dev/null 2>&1; then
-            gh release edit "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes "Android DJI and demo builds verified by GitHub Actions, including Flat Camera Mode recording, aircraft microSD preflight, launcher resources, USB/AOA integration, configured DJI key and APK signature."
+            gh release edit "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes "Android DJI and demo builds verified by GitHub Actions, including mandatory verified Home Point, RTH height, Smart RTH, GO_HOME failsafe, low-battery handoff, emergency landing, camera recording, microSD preflight, USB/AOA integration, configured DJI key and APK signature."
           else
-            gh release create "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes "Android DJI and demo builds verified by GitHub Actions, including Flat Camera Mode recording, aircraft microSD preflight, launcher resources, USB/AOA integration, configured DJI key and APK signature."
+            gh release create "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes "Android DJI and demo builds verified by GitHub Actions, including mandatory verified Home Point, RTH height, Smart RTH, GO_HOME failsafe, low-battery handoff, emergency landing, camera recording, microSD preflight, USB/AOA integration, configured DJI key and APK signature."
           fi
           gh release upload "$release_tag" release/*.apk release/*.zip --clobber

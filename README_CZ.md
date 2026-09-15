@@ -2,7 +2,7 @@
 
 ## Android – kompletní supervised-flight aplikace
 
-Android verze `0.7.3` pro DJI Mini 2 obsahuje živý obraz, telemetrii, offline detekci
+Android verze `0.8.0` pro DJI Mini 2 obsahuje živý obraz, telemetrii, offline detekci
 osob EfficientDet Lite, označení Worker 1 a Worker 2, animovaný náhled trajektorie,
 jednorázové systémové ověření a skutečné řízení přes DJI Mobile SDK `4.18`.
 
@@ -30,6 +30,12 @@ Po samostatném potvrzení a biometrickém ověření umí aplikace také autono
 autonomní přistání včetně potvrzení závěrečného dosednutí a DJI Return-to-Home.
 Vzlet, přistání ani RTH nejsou skrytou součástí filmového režimu a každý vyžaduje
 vlastní nové schválení.
+
+Před vzletem je povinné tlačítko `ULOŽIT BOD VZLETU`. Aplikace zapíše Home Point
+na aktuální polohu dronu, načte jej zpět, ověří odchylku, nastaví RTH výšku,
+zapne Smart RTH a nastaví ztrátu spojení na `GO_HOME`. Běžné ukončení letu používá
+`NÁVRAT A PŘISTÁNÍ`; přímé přistání na aktuálním místě je oddělená nouzová akce
+aktivovaná dlouhým podržením a následným bezpečnostním potvrzením.
 
 Tok řízení je:
 

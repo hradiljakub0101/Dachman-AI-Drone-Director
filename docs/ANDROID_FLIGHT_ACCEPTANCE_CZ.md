@@ -27,26 +27,32 @@ Podmínky: zkušený pilot, přímý dohled, bez lidí v trase, bez vedení, str
 slabý vítr, plně nabitý RC a minimálně dvacet pět procent baterie dronu. Výchozí profil
 je `PŘESNÝ` a výškový strop osm metrů.
 
-1. Potvrď volný prostor, zvol `VZLET` a projdi systémovým ověřením.
-2. Očekávej automatický vzlet do visu DJI a stav bez aktivního Virtual Stick.
-3. Označ Worker 1, zvol `STATICKÉ SLEDOVÁNÍ`, schval a ověř yaw/gimbal. Pracovník se
+1. Polož dron na místo návratu, počkej alespoň na osm satelitů, nastav bezpečnou RTH
+   výšku a zvol `ULOŽIT BOD VZLETU`.
+2. Ověř zelený stav Home Pointu, zpětně načtené souřadnice, vzdálenost, Smart RTH
+   a failsafe `GO_HOME`. Bez tohoto stavu musí být vzlet zablokovaný.
+3. Potvrď volný prostor, zvol `VZLET` a projdi systémovým ověřením.
+4. Očekávej automatický vzlet do visu DJI a stav bez aktivního Virtual Stick.
+5. Označ Worker 1, zvol `STATICKÉ SLEDOVÁNÍ`, schval a ověř yaw/gimbal. Pracovník se
    pomalu přesune nahoru a dolů v obrazu: gimbal se musí plynule vrátit ke kompozici,
    v mrtvé zóně zastavit a nesmí kmitat.
-4. Nech pracovníka bezpečně změnit vzdálenost. Ověř postupné kroky digitálního zoomu,
+6. Nech pracovníka bezpečně změnit vzdálenost. Ověř postupné kroky digitálního zoomu,
    oddálení u okraje snímku a zobrazenou hodnotu `ZOOM`. Pokud daný video režim povel
    odmítne, aplikace to musí oznámit a ponechat automatický gimbal aktivní.
-5. Aktivuj `FOLLOW` a lehce vychyl kterýkoli fyzický knipl. Do jedné periody řízení,
+7. Aktivuj `FOLLOW` a lehce vychyl kterýkoli fyzický knipl. Do jedné periody řízení,
    tedy přibližně sta milisekund, se musí zobrazit `PILOT OVERRIDE` a Virtual Stick vypnout.
-6. Režim znovu ručně připrav, spusť jej a otoč kolečkem gimbalu RC-N1. Očekávej stejné
+8. Režim znovu ručně připrav, spusť jej a otoč kolečkem gimbalu RC-N1. Očekávej stejné
    trvalé převzetí pilotem; AI kamera se sama nesmí znovu zapnout.
-7. Ověř ztrátu cíle: přibližně po devíti stech milisekundách musí přijít HOLD a po
+9. Ověř ztrátu cíle: přibližně po devíti stech milisekundách musí přijít HOLD a po
    zhruba dvou celých dvou desetinách sekundy úplné ukončení režimu.
-8. Postupně otestuj statické sledování, Follow, Duo Follow, oblet vlevo, oblet vpravo,
+10. Postupně otestuj statické sledování, Follow, Duo Follow, oblet vlevo, oblet vpravo,
    odjezd, stoupavé odhalení a režim lana. Vždy začni profilem `PŘESNÝ`.
-9. Zvol `PŘISTÁNÍ`, potvrď kontrolu prostoru a ověř. Aplikace musí zahájit sestup a
-   při požadavku DJI potvrdit závěrečné dosednutí pod třicet centimetrů.
-10. V dalším letu ověř `NÁVRAT DOMŮ` až po kontrole domovského bodu a bezpečné RTH výšky.
-   Během celé trasy drž přímý dohled a připravený ovladač.
+11. Zvol `NÁVRAT A PŘISTÁNÍ`, potvrď trasu a ověř. Dron musí použít uložený Home Point,
+   nastavenou RTH výšku a pod třiceti centimetry potvrdit dosednutí.
+12. Nouzové tlačítko pouze krátce stiskni: nesmí se nic spustit. Potom jej dlouze podrž,
+   proveď druhé potvrzení a pouze v bezpečném prostoru ověř přistání na místě.
+13. Při řízeném testu bateriové pojistky ověř, že aplikace odešle RTH pouze jednou,
+   vypne Virtual Stick a zobrazí stav, že řízení převzal letový kontrolér DJI.
 
 ## Kritéria PASS
 

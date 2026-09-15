@@ -21,7 +21,9 @@ import dji.common.camera.StorageState;
 import dji.common.error.DJIError;
 import dji.common.error.DJISDKError;
 import dji.common.flightcontroller.FlightControllerState;
+import dji.common.flightcontroller.ConnectionFailSafeBehavior;
 import dji.common.flightcontroller.LocationCoordinate3D;
+import dji.common.flightcontroller.SmartRTHState;
 import dji.common.flightcontroller.virtualstick.FlightControlData;
 import dji.common.flightcontroller.virtualstick.FlightCoordinateSystem;
 import dji.common.flightcontroller.virtualstick.RollPitchControlMode;
@@ -59,6 +61,7 @@ final class DjiConnection implements DroneSession {
     private static final long VIDEO_WATCHDOG_MILLIS = 2_500L;
     private static final long VIDEO_STALE_MILLIS = 5_000L;
     private static final int MAX_VIDEO_RESTARTS = 3;
+    private static final int AUTOMATIC_RTH_BATTERY_PERCENT = 25;
 
     private enum AircraftAction {
         NONE("ŽÁDNÁ"), TAKEOFF("AUTONOMNÍ VZLET"), LANDING("AUTONOMNÍ PŘISTÁNÍ"), RETURN_HOME("NÁVRAT DOMŮ");
@@ -110,6 +113,11 @@ final class DjiConnection implements DroneSession {
     private volatile AircraftAction aircraftAction = AircraftAction.NONE;
     private volatile long aircraftActionStartedAt;
     private volatile boolean landingConfirmationSent;
+    private volatile ReturnHomeStatus returnHomeStatus = ReturnHomeStatus.missing(
+        "Před vzletem ulož a ověř návratový bod.");
+    private volatile boolean lowBatteryRthTriggered;
+    private volatile boolean smartRthConfirmationSent;
+    private volatile boolean flightObserved;
 
     private final Runnable connectionRetry = new Runnable() {
         @Override public void run() {
@@ -172,6 +180,7 @@ final class DjiConnection implements DroneSession {
         postCameraStorage();
         postCameraAutomation();
         postAction();
+        postReturnHomeStatus();
     }
 
     @Override public void connect() {
@@ -324,6 +333,10 @@ final class DjiConnection implements DroneSession {
             && (compatibleModel || supportsDigitalZoom(camera));
         cameraStorageStatus = camera == null || !camera.isConnected()
             ? CameraStorageStatus.disconnected() : CameraStorageStatus.checking();
+        returnHomeStatus = ReturnHomeStatus.missing("Polož dron na místo návratu a ulož bod vzletu.");
+        lowBatteryRthTriggered = false;
+        smartRthConfirmationSent = false;
+        flightObserved = false;
         lastRequestedZoom = Float.NaN;
         lastAppliedZoom = CameraDirector.MIN_DIGITAL_ZOOM;
         zoomCommandPending = false;
@@ -335,6 +348,7 @@ final class DjiConnection implements DroneSession {
         if (battery != null) battery.setStateCallback(state -> {
             batteryPercent = state.getChargeRemainingInPercent();
             postTelemetry();
+            handleBatterySafety();
         });
         if (airLink != null) airLink.setUplinkSignalQualityCallback(percent -> {
             signalPercent = percent;
@@ -355,6 +369,7 @@ final class DjiConnection implements DroneSession {
                 + " • čekám na živý obraz."
             : "Připojený model není DJI Mini 2; živé řízení je uzamčeno.");
         postTelemetry();
+        postReturnHomeStatus();
     }
 
     private void onCameraStorageState(StorageState state) {
@@ -371,6 +386,9 @@ final class DjiConnection implements DroneSession {
 
     private void onFlightState(FlightControllerState state) {
         lastFlightState = state;
+        if (state.isFlying()) flightObserved = true;
+        updateReturnHomeDistance(state);
+        handleSmartRthRequest(state);
         AircraftAction action = aircraftAction;
         if ((action == AircraftAction.LANDING || action == AircraftAction.RETURN_HOME)
                 && state.isLandingConfirmationNeeded() && !landingConfirmationSent) {
@@ -394,7 +412,77 @@ final class DjiConnection implements DroneSession {
             finishAircraftAction(action == AircraftAction.LANDING
                 ? "Autonomní přistání dokončeno." : "Návrat domů a přistání dokončeny.");
         }
+        if (flightObserved && !state.areMotorsOn() && !state.isFlying()) {
+            flightObserved = false;
+            lowBatteryRthTriggered = false;
+            smartRthConfirmationSent = false;
+            returnHomeStatus = ReturnHomeStatus.missing(
+                "Let skončil. Před dalším vzletem znovu ulož návratový bod.");
+            postReturnHomeStatus();
+        }
         postTelemetry();
+    }
+
+    private void updateReturnHomeDistance(FlightControllerState state) {
+        ReturnHomeStatus status = returnHomeStatus;
+        LocationCoordinate3D location = state.getAircraftLocation();
+        if (!status.ready || location == null) return;
+        double distance = ReturnHomeStatus.distanceMeters(location.getLatitude(), location.getLongitude(),
+            status.latitude, status.longitude);
+        returnHomeStatus = status.withDistanceToHome(distance);
+        postReturnHomeStatus();
+    }
+
+    private void handleSmartRthRequest(FlightControllerState state) {
+        if (state.getGoHomeAssessment() == null
+                || state.getGoHomeAssessment().getSmartRTHState() != SmartRTHState.COUNTING_DOWN
+                || smartRthConfirmationSent) return;
+        smartRthConfirmationSent = true;
+        beginAutomaticReturnHome("DJI Smart RTH vyhodnotilo nedostatek energie.", true);
+    }
+
+    private void handleBatterySafety() {
+        FlightControllerState state = lastFlightState;
+        if (state == null || batteryPercent < 0 || batteryPercent > AUTOMATIC_RTH_BATTERY_PERCENT
+                || !state.isFlying() || state.isGoingHome() || lowBatteryRthTriggered) return;
+        lowBatteryRthTriggered = true;
+        beginAutomaticReturnHome("Baterie klesla na bezpečnostní mez; spouštím návrat domů.", false);
+    }
+
+    private void beginAutomaticReturnHome(String reason, boolean smartRequestActive) {
+        FlightController current = flightController;
+        FlightControllerState state = lastFlightState;
+        if (current == null || state == null || !state.isHomeLocationSet()) {
+            postStatus("KRITICKÉ: Automatický RTH nelze spustit bez platného Home Pointu. Pilot musí převzít řízení.");
+            return;
+        }
+        if (!returnHomeStatus.ready) {
+            postStatus("KRITICKÉ: Návratový bod nebyl aplikací ověřen. Pilot musí převzít řízení.");
+            return;
+        }
+        withoutVirtualStick(reason, (success, message) -> {
+            if (!success) postStatus("KRITICKÉ: " + message);
+        }, () -> {
+            setAircraftAction(AircraftAction.RETURN_HOME);
+            if (smartRequestActive) {
+                current.confirmSmartReturnToHomeRequest(true, error -> {
+                    if (error == null) postStatus(reason + " Smart RTH potvrzeno.");
+                    else startGoHomeFallback(current, reason);
+                });
+            } else {
+                startGoHomeFallback(current, reason);
+            }
+        });
+    }
+
+    private void startGoHomeFallback(FlightController current, String reason) {
+        current.startGoHome(error -> {
+            if (error == null) postStatus(reason + " RTH převzal letový kontrolér DJI.");
+            else {
+                clearAircraftAction();
+                postStatus("KRITICKÉ: Návrat domů se nepodařilo spustit: " + errorText(error));
+            }
+        });
     }
 
     private void onHardwareState(HardwareState state) {
@@ -647,6 +735,120 @@ final class DjiConnection implements DroneSession {
         });
     }
 
+    @Override public void prepareReturnHome(int heightMeters, Completion completion) {
+        FlightController current = flightController;
+        FlightControllerState state = lastFlightState;
+        if (!supportsLiveControl() || current == null || state == null) {
+            postCompletion(completion, false, "Mini 2, RC-N1 a živá telemetrie nejsou připravené.");
+            return;
+        }
+        if (state.areMotorsOn() || state.isFlying()) {
+            postCompletion(completion, false, "Návratový bod lze uložit pouze před spuštěním motorů.");
+            return;
+        }
+        if (state.getSatelliteCount() < SafetySupervisor.MINIMUM_SATELLITES) {
+            postCompletion(completion, false, "Pro uložení bodu je potřeba alespoň osm satelitů.");
+            return;
+        }
+        LocationCoordinate3D aircraftLocation = state.getAircraftLocation();
+        if (aircraftLocation == null || Double.isNaN(aircraftLocation.getLatitude())
+                || Double.isNaN(aircraftLocation.getLongitude())) {
+            postCompletion(completion, false, "Poloha dronu zatím není platná.");
+            return;
+        }
+        if (heightMeters < 20 || heightMeters > 500) {
+            postCompletion(completion, false, "RTH výška musí být mezi dvaceti a pěti sty metry.");
+            return;
+        }
+        returnHomeStatus = ReturnHomeStatus.configuring();
+        postReturnHomeStatus();
+        final double requestedLatitude = aircraftLocation.getLatitude();
+        final double requestedLongitude = aircraftLocation.getLongitude();
+        current.setHomeLocationUsingAircraftCurrentLocation(error -> {
+            if (error != null) {
+                failReturnHomePreparation(completion, "Home Point nelze uložit: " + errorText(error));
+                return;
+            }
+            current.getHomeLocation((home, homeError) -> {
+                if (homeError != null || home == null) {
+                    failReturnHomePreparation(completion, "Uložený Home Point nelze zpětně načíst: " + errorText(homeError));
+                    return;
+                }
+                double verificationError = ReturnHomeStatus.distanceMeters(requestedLatitude,
+                    requestedLongitude, home.getLatitude(), home.getLongitude());
+                if (Double.isNaN(verificationError)
+                        || verificationError > ReturnHomeStatus.MAXIMUM_HOME_VERIFICATION_ERROR_METERS) {
+                    failReturnHomePreparation(completion,
+                        "Home Point se liší od polohy dronu o více než deset metrů.");
+                    return;
+                }
+                configureReturnHomeHeight(current, home, verificationError, heightMeters, completion);
+            });
+        });
+    }
+
+    private void configureReturnHomeHeight(FlightController current, LocationCoordinate2D home,
+            double verificationError, int heightMeters, Completion completion) {
+        current.setGoHomeHeightInMeters(heightMeters, error -> {
+            if (error != null) {
+                failReturnHomePreparation(completion, "RTH výšku nelze nastavit: " + errorText(error));
+                return;
+            }
+            current.getGoHomeHeightInMeters((storedHeight, heightError) -> {
+                if (heightError != null || storedHeight == null || storedHeight != heightMeters) {
+                    failReturnHomePreparation(completion, "Letový kontrolér nepotvrdil zvolenou RTH výšku.");
+                    return;
+                }
+                configureSmartRth(current, home, verificationError, storedHeight, completion);
+            });
+        });
+    }
+
+    private void configureSmartRth(FlightController current, LocationCoordinate2D home,
+            double verificationError, int heightMeters, Completion completion) {
+        current.setSmartReturnToHomeEnabled(true, error -> {
+            if (error != null) {
+                failReturnHomePreparation(completion, "Smart RTH nelze zapnout: " + errorText(error));
+                return;
+            }
+            current.getSmartReturnToHomeEnabled((enabled, smartError) -> {
+                if (smartError != null || enabled == null || !enabled) {
+                    failReturnHomePreparation(completion, "Letový kontrolér nepotvrdil Smart RTH.");
+                    return;
+                }
+                configureConnectionFailsafe(current, home, verificationError, heightMeters, completion);
+            });
+        });
+    }
+
+    private void configureConnectionFailsafe(FlightController current, LocationCoordinate2D home,
+            double verificationError, int heightMeters, Completion completion) {
+        current.setConnectionFailSafeBehavior(ConnectionFailSafeBehavior.GO_HOME, error -> {
+            if (error != null) {
+                failReturnHomePreparation(completion, "Failsafe GO_HOME nelze nastavit: " + errorText(error));
+                return;
+            }
+            current.getConnectionFailSafeBehavior((behavior, failsafeError) -> {
+                boolean goHome = failsafeError == null && behavior == ConnectionFailSafeBehavior.GO_HOME;
+                returnHomeStatus = ReturnHomeStatus.verified(home.getLatitude(), home.getLongitude(),
+                    System.currentTimeMillis(), verificationError, heightMeters, true, goHome);
+                postReturnHomeStatus();
+                if (returnHomeStatus.ready) {
+                    postCompletion(completion, true,
+                        "Návratový bod, RTH výška, Smart RTH a failsafe GO_HOME jsou ověřené.");
+                } else {
+                    failReturnHomePreparation(completion, "Failsafe GO_HOME nebyl zpětně potvrzen.");
+                }
+            });
+        });
+    }
+
+    private void failReturnHomePreparation(Completion completion, String message) {
+        returnHomeStatus = ReturnHomeStatus.missing(message);
+        postReturnHomeStatus();
+        postCompletion(completion, false, message);
+    }
+
     @Override public void startLanding(Completion completion) {
         String blocked = validateAirborneAction(false);
         if (blocked != null) {
@@ -726,6 +928,7 @@ final class DjiConnection implements DroneSession {
         if (state.getSatelliteCount() < SafetySupervisor.MINIMUM_SATELLITES) return "Pro vzlet je potřeba alespoň osm satelitů.";
         if (signalPercent < SafetySupervisor.MINIMUM_SIGNAL_PERCENT) return "Rádiové spojení je pro vzlet příliš slabé.";
         if (!state.isHomeLocationSet()) return "Domovský bod zatím není uložen.";
+        if (!returnHomeStatus.ready) return "Vzlet je zablokovaný: v aplikaci ulož a ověř návratový bod.";
         if (state.isFailsafeEnabled()) return "DJI failsafe je aktivní.";
         if (state.getFlightWindWarning() != null && "LEVEL_2".equals(state.getFlightWindWarning().name())) return "Silný vítr blokuje autonomní vzlet.";
         return null;
@@ -738,6 +941,7 @@ final class DjiConnection implements DroneSession {
         if (state == null) return "Čekám na živou telemetrii letového kontroléru.";
         if (!state.areMotorsOn() || !state.isFlying()) return "Dron právě neletí.";
         if (returnHome && !state.isHomeLocationSet()) return "Návrat domů nelze spustit bez uloženého domovského bodu.";
+        if (returnHome && !returnHomeStatus.ready) return "Návrat domů je zablokovaný: Home Point nebyl aplikací ověřen.";
         if (returnHome && state.getSatelliteCount() < SafetySupervisor.MINIMUM_SATELLITES) return "Návrat domů vyžaduje spolehlivou GNSS polohu.";
         return null;
     }
@@ -863,6 +1067,10 @@ final class DjiConnection implements DroneSession {
         recording = false;
         recordingCommandPending = false;
         cameraStorageStatus = CameraStorageStatus.disconnected();
+        returnHomeStatus = ReturnHomeStatus.missing("Dron není připojen.");
+        lowBatteryRthTriggered = false;
+        smartRthConfirmationSent = false;
+        flightObserved = false;
         videoActive = false;
         digitalZoomSupported = false;
         zoomCommandPending = false;
@@ -872,6 +1080,7 @@ final class DjiConnection implements DroneSession {
         lastZoomAt = 0L;
         postCameraAutomation();
         postCameraStorage();
+        postReturnHomeStatus();
         clearAircraftAction();
         postStatus(message);
         postVideo(false);
@@ -993,6 +1202,11 @@ final class DjiConnection implements DroneSession {
     private void postAction() {
         AircraftAction value = aircraftAction;
         main.post(() -> { if (!closed && listener != null) listener.onAircraftAction(value.label, value != AircraftAction.NONE); });
+    }
+
+    private void postReturnHomeStatus() {
+        ReturnHomeStatus status = returnHomeStatus;
+        main.post(() -> { if (!closed && listener != null) listener.onReturnHomeStatus(status); });
     }
 
     private void postCompletion(Completion completion, boolean success, String message) {

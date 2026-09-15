@@ -31,6 +31,8 @@ import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.TextView;
+import java.text.DateFormat;
+import java.util.Date;
 import java.util.Locale;
 
 /** Landscape, camera-first flight console for supervised DJI Mini 2 filming. */
@@ -50,7 +52,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private static final int CONTROL_DRAWER_DP = 360;
     private static final int MAP_DRAWER_DP = 390;
 
-    private enum PendingKind { NONE, MODE, TAKEOFF, LANDING, RETURN_HOME, FULL_MISSION }
+    private enum PendingKind { NONE, MODE, TAKEOFF, EMERGENCY_LANDING, RETURN_HOME, FULL_MISSION }
 
     private final ApprovalGate gate = new ApprovalGate();
     private final ControlAuthority authority = new ControlAuthority();
@@ -79,6 +81,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private TextView authorityText;
     private TextView cameraDirectorText;
     private TextView cameraStorageBadge;
+    private TextView returnHomeText;
+    private TextView rthHeightText;
     private LinearLayout approvalCard;
     private CheckBox readinessCheck;
     private Button approveButton;
@@ -93,6 +97,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private Button mapDrawerHandle;
     private Spinner profileSpinner;
     private SeekBar heightSeek;
+    private SeekBar rthHeightSeek;
     private PendingKind pendingKind = PendingKind.NONE;
     private FlightPlan pendingPlan;
     private TelemetrySnapshot telemetry = TelemetrySnapshot.disconnected();
@@ -102,6 +107,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private boolean cameraAutomationActive;
     private boolean cameraRecording;
     private CameraStorageStatus cameraStorageStatus = CameraStorageStatus.disconnected();
+    private ReturnHomeStatus returnHomeStatus = ReturnHomeStatus.missing(
+        "Před vzletem ulož návratový bod.");
     private boolean cameraZoomAvailable;
     private float cameraZoomFactor = CameraDirector.MIN_DIGITAL_ZOOM;
     /** Guided mission: every composition still requires biometric approval and can be aborted by RC. */
@@ -403,6 +410,37 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         controls.addView(heightSeek);
         controls.addView(text("Strop řízení, nikoli příkaz vystoupat.", 9, MUTED, false));
 
+        section(controls, "NÁVRATOVÝ BOD – POVINNÉ PŘED VZLETEM");
+        LinearLayout homeCard = column();
+        homeCard.setPadding(dp(8), dp(7), dp(8), dp(7));
+        homeCard.setBackground(card(Color.argb(145, 17, 48, 61), 9, ORANGE));
+        returnHomeText = text("HOME — • polož dron na místo návratu", 10, Color.WHITE, true);
+        homeCard.addView(returnHomeText);
+        rthHeightText = text("RTH VÝŠKA – 30 m", 10, Color.WHITE, true);
+        homeCard.addView(rthHeightText);
+        rthHeightSeek = new SeekBar(this);
+        rthHeightSeek.setMin(20);
+        rthHeightSeek.setMax(120);
+        rthHeightSeek.setProgress(30);
+        rthHeightSeek.setProgressTintList(ColorStateList.valueOf(ORANGE));
+        rthHeightSeek.setThumbTintList(ColorStateList.valueOf(ORANGE));
+        rthHeightSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int value, boolean fromUser) {
+                rthHeightText.setText("RTH VÝŠKA – " + value + " m");
+                if (fromUser && returnHomeStatus.ready) {
+                    renderReturnHomeStatus();
+                    invalidatePending("RTH výška změněna – Home Point je nutné znovu ověřit.");
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        homeCard.addView(rthHeightSeek);
+        Button saveHome = button("ULOŽIT BOD VZLETU", GREEN,
+            () -> dji.prepareReturnHome(rthHeightSeek.getProgress(), this::showCompletion));
+        homeCard.addView(saveHome, fullButtonParams());
+        controls.addView(homeCard);
+
         approvalCard = column();
         approvalCard.setPadding(dp(9), dp(8), dp(9), dp(8));
         approvalCard.setBackground(card(Color.argb(155, 23, 57, 67), 10, CYAN));
@@ -422,9 +460,16 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         section(controls, "AUTONOMNÍ AKCE DRONU");
         GridLayout aircraftGrid = grid();
         addGridButton(aircraftGrid, "VZLET", GREEN, () -> requestAircraftAction(PendingKind.TAKEOFF));
-        addGridButton(aircraftGrid, "PŘISTÁNÍ", ORANGE, () -> requestAircraftAction(PendingKind.LANDING));
-        addGridButton(aircraftGrid, "NÁVRAT DOMŮ", ORANGE, () -> requestAircraftAction(PendingKind.RETURN_HOME));
+        addGridButton(aircraftGrid, "NÁVRAT A PŘISTÁNÍ", ORANGE,
+            () -> requestAircraftAction(PendingKind.RETURN_HOME));
         addGridButton(aircraftGrid, "AUTONOMNÍ MISE", CYAN, this::requestFullMission);
+        Button emergencyLanding = button("DRŽET: NOUZOVĚ PŘISTÁT ZDE", RED,
+            () -> showStatus("Nouzové přistání otevřeš dlouhým podržením tlačítka."));
+        emergencyLanding.setOnLongClickListener(view -> {
+            requestAircraftAction(PendingKind.EMERGENCY_LANDING);
+            return true;
+        });
+        addGridView(aircraftGrid, emergencyLanding);
         cancelActionButton = button("ZRUŠIT AUTO AKCI", RED,
             () -> dji.cancelAircraftAction(this::showCompletion));
         cancelActionButton.setEnabled(false);
@@ -576,10 +621,10 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         String description;
         if (kind == PendingKind.TAKEOFF) {
             description = "AUTONOMNÍ VZLET\nDron spustí motory a vystoupá přibližně do výšky visu DJI.";
-        } else if (kind == PendingKind.LANDING) {
-            description = "AUTONOMNÍ PŘISTÁNÍ\nAplikace potvrdí i závěrečné dosednutí pod třicet centimetrů.";
+        } else if (kind == PendingKind.EMERGENCY_LANDING) {
+            description = "NOUZOVÉ PŘISTÁNÍ ZDE\nDron nepoletí domů a začne přistávat v aktuální poloze.";
         } else {
-            description = "NÁVRAT DOMŮ\nDron použije uložený domovský bod a nastavenou DJI RTH výšku.";
+            description = "NÁVRAT A PŘISTÁNÍ\nDron použije ověřený Home Point a nastavenou DJI RTH výšku.";
         }
         gate.request(description.replace('\n', ' '));
         pendingText.setText(description);
@@ -709,8 +754,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             runtime.abort("Autonomní vzlet – Virtual Stick vypnut");
             closeHudDrawers();
             dji.startTakeoff(this::showCompletion);
-        } else if (kind == PendingKind.LANDING) {
-            runtime.abort("Autonomní přistání – Virtual Stick vypnut");
+        } else if (kind == PendingKind.EMERGENCY_LANDING) {
+            runtime.abort("Nouzové přistání – Virtual Stick vypnut");
             closeHudDrawers();
             dji.startLanding(this::showCompletion);
         } else if (kind == PendingKind.RETURN_HOME) {
@@ -799,10 +844,13 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private void updateApprovalButton() {
         if (approveButton == null) return;
         boolean needsChecklist = pendingKind == PendingKind.TAKEOFF
-            || pendingKind == PendingKind.LANDING || pendingKind == PendingKind.RETURN_HOME
+            || pendingKind == PendingKind.EMERGENCY_LANDING || pendingKind == PendingKind.RETURN_HOME
             || pendingKind == PendingKind.FULL_MISSION;
+        boolean needsVerifiedHome = pendingKind == PendingKind.TAKEOFF
+            || pendingKind == PendingKind.FULL_MISSION || pendingKind == PendingKind.RETURN_HOME;
         approveButton.setEnabled(authentication == null && pendingKind != PendingKind.NONE
-            && (!needsChecklist || readinessCheck.isChecked()));
+            && (!needsChecklist || readinessCheck.isChecked())
+            && (!needsVerifiedHome || homeConfigurationReady()));
         approveButton.setText(authentication == null ? "OVĚŘIT A SPUSTIT" : "OVĚŘOVÁNÍ…");
     }
 
@@ -868,6 +916,46 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             cameraStorageStatus = status;
             renderRecordingUi();
         });
+    }
+
+    @Override public void onReturnHomeStatus(ReturnHomeStatus status) {
+        if (status == null) return;
+        ui(() -> {
+            returnHomeStatus = status;
+            renderReturnHomeStatus();
+            updateApprovalButton();
+        });
+    }
+
+    private boolean homeConfigurationReady() {
+        return returnHomeStatus.ready && rthHeightSeek != null
+            && returnHomeStatus.rthHeightMeters == rthHeightSeek.getProgress();
+    }
+
+    private void renderReturnHomeStatus() {
+        if (returnHomeText == null) return;
+        if (returnHomeStatus.configuring) {
+            returnHomeText.setText("HOME … • zapisuji a ověřuji bezpečnostní nastavení");
+            returnHomeText.setTextColor(ORANGE);
+            return;
+        }
+        if (!returnHomeStatus.ready) {
+            returnHomeText.setText("HOME — • " + returnHomeStatus.detail);
+            returnHomeText.setTextColor(RED);
+            return;
+        }
+        String saved = DateFormat.getTimeInstance(DateFormat.SHORT).format(
+            new Date(returnHomeStatus.savedAtEpochMillis));
+        String distance = Double.isNaN(returnHomeStatus.distanceToHomeMeters) ? "—"
+            : String.format(Locale.getDefault(), "%.1f m", returnHomeStatus.distanceToHomeMeters);
+        boolean selectedHeightMatches = rthHeightSeek != null
+            && rthHeightSeek.getProgress() == returnHomeStatus.rthHeightMeters;
+        returnHomeText.setText(String.format(Locale.getDefault(),
+            "HOME %s • %.5f, %.5f • vzdálenost %s • RTH %d m%s",
+            saved, returnHomeStatus.latitude, returnHomeStatus.longitude, distance,
+            returnHomeStatus.rthHeightMeters,
+            selectedHeightMatches ? " • SMART + FAILSAFE OK" : " • ULOŽ ZNOVU"));
+        returnHomeText.setTextColor(selectedHeightMatches ? GREEN : ORANGE);
     }
 
     private void renderRecordingUi() {

@@ -20,6 +20,7 @@ final class DjiConnection implements DroneSession {
             listener.onCameraStorageState(CameraStorageStatus.disconnected());
             listener.onCameraAutomationState(false, CameraDirector.MIN_DIGITAL_ZOOM);
             listener.onAircraftAction("ŽÁDNÁ", false);
+            listener.onReturnHomeStatus(ReturnHomeStatus.missing("DJI varianta není připojena."));
         }
     }
 
@@ -50,6 +51,10 @@ final class DjiConnection implements DroneSession {
 
     @Override public void takePhoto(Completion completion) {
         completion.onComplete(false, "Kamera není v offline náhledu připojena.");
+    }
+
+    @Override public void prepareReturnHome(int heightMeters, Completion completion) {
+        completion.onComplete(false, "Návratový bod vyžaduje DJI variantu a připojený Mini 2.");
     }
 
     @Override public void startTakeoff(Completion completion) {

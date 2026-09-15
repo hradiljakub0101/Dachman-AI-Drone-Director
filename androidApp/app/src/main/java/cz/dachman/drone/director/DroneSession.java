@@ -14,6 +14,7 @@ public interface DroneSession {
         void onCameraStorageState(CameraStorageStatus status);
         void onCameraAutomationState(boolean digitalZoomSupported, float appliedZoomFactor);
         void onAircraftAction(String action, boolean active);
+        void onReturnHomeStatus(ReturnHomeStatus status);
     }
 
     void setListener(Listener listener);
@@ -27,6 +28,7 @@ public interface DroneSession {
     void disableVirtualStick(String reason, Completion completion);
     void toggleRecording(Completion completion);
     void takePhoto(Completion completion);
+    void prepareReturnHome(int heightMeters, Completion completion);
     void startTakeoff(Completion completion);
     void startLanding(Completion completion);
     void startReturnHome(Completion completion);
