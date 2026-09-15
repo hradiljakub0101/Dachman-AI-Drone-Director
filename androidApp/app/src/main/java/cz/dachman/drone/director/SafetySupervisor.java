@@ -17,6 +17,14 @@ public final class SafetySupervisor {
 
     public SafetyDecision evaluate(FlightPlan plan, TelemetrySnapshot telemetry,
             TrackingSnapshot tracking, WorkerGeoSnapshot geo, long nowMillis, long startedAtMillis) {
+        return evaluate(plan, telemetry, tracking, geo,
+            new SafetyConfiguration(MINIMUM_WORKER_STANDOFF_METERS, true, SiteSafetyPlan.empty()),
+            nowMillis, startedAtMillis);
+    }
+
+    public SafetyDecision evaluate(FlightPlan plan, TelemetrySnapshot telemetry,
+            TrackingSnapshot tracking, WorkerGeoSnapshot geo, SafetyConfiguration configuration,
+            long nowMillis, long startedAtMillis) {
         if (plan == null || plan.mode == FlightMode.HOLD) return SafetyDecision.stop("Nebyl zvolen letový režim.");
         if (!telemetry.sdkRegistered) return SafetyDecision.stop("DJI SDK není zaregistrováno.");
         if (!telemetry.connected) return SafetyDecision.stop("Dron nebo ovladač není připojen.");
@@ -50,6 +58,9 @@ public final class SafetySupervisor {
             if (confidence < 0.35f) return SafetyDecision.hold("Nízká jistota rozpoznání pracovníka.");
         }
         if (geo != null && geo.hasAnyBinding()) {
+            if (configuration == null || !configuration.standoffCalibrated) {
+                return SafetyDecision.hold("Před vzletem kalibruj bezpečnostní odstup pracovníka.");
+            }
             if (!geo.requiredBound(plan.mode)) return SafetyDecision.hold("Chybí polohový identifikátor pracovníka.");
             if (!geo.requiredReliable(plan.mode, nowMillis)) {
                 return SafetyDecision.hold("Polohový tag je nepřesný nebo neposílá aktuální data.");
@@ -58,11 +69,23 @@ public final class SafetySupervisor {
             WorkerPositionFix worker = geo.targetFor(plan.mode);
             double distance = HybridFollowController.distanceMeters(telemetry.aircraftLatitude,
                 telemetry.aircraftLongitude, worker.latitude, worker.longitude);
-            if (distance < MINIMUM_WORKER_STANDOFF_METERS) {
-                return SafetyDecision.stop("Dron je uvnitř bezpečnostního odstupu od pracovníka.");
+            double standoff = configuration == null ? MINIMUM_WORKER_STANDOFF_METERS
+                : configuration.minimumWorkerStandoffMeters;
+            if (distance < standoff) {
+                return SafetyDecision.stop("Zakázaný přelet nebo nedostatečný odstup od pracovníka.");
             }
             if (distance > MAXIMUM_WORKER_DISTANCE_METERS) {
                 return SafetyDecision.hold("Pracovník je mimo schválený sledovací koridor.");
+            }
+        }
+        SiteSafetyPlan site = configuration == null ? SiteSafetyPlan.empty() : configuration.site;
+        if (telemetry.hasAircraftLocation() && (site.hasRoofBoundary() || site.hasForbiddenZone())) {
+            if (!site.aircraftAllowed(telemetry.aircraftLatitude, telemetry.aircraftLongitude)) {
+                return SafetyDecision.stop("Dron opustil hranici střechy nebo vstoupil do zakázané zóny.");
+            }
+            float roofHeight = site.roofHeightAt(telemetry.aircraftLatitude, telemetry.aircraftLongitude);
+            if (Float.isFinite(roofHeight) && telemetry.altitudeMeters - roofHeight < 3f) {
+                return SafetyDecision.stop("Nedostatečná výška nad vypočtenou rovinou střechy.");
             }
         }
         return SafetyDecision.allow();

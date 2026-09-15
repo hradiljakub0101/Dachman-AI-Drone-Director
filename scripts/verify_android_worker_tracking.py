@@ -9,6 +9,13 @@ checks = {
     "standoff guard": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/SafetySupervisor.java", "MINIMUM_WORKER_STANDOFF_METERS"),
     "stale tag guard": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/WorkerPositionFix.java", "isFresh"),
     "pilot override": (root / "androidApp/app/src/dji/java/cz/dachman/drone/director/DjiConnection.java", "postPilotOverride"),
+    "worker map markers": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/FlightMapView.java", "workerOneMarker"),
+    "roof and forbidden polygons": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/FlightMapView.java", "forbiddenPolygon"),
+    "appearance identity": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/AppearanceSignature.java", "upper clothing"),
+    "fusion state": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/FusionStatus.java", "FUSION_OK"),
+    "flight audit": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/FlightAuditLog.java", "flight-ai-audit.jsonl"),
+    "roof plane": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/SiteSafetyPlan.java", "roofHeightAt"),
+    "overflight guard": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/SafetySupervisor.java", "Zakázaný přelet"),
 }
 
 failed = []

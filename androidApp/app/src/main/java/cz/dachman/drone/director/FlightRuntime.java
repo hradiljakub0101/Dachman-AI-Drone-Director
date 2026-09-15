@@ -18,6 +18,7 @@ public final class FlightRuntime {
     private volatile TelemetrySnapshot telemetry = TelemetrySnapshot.disconnected();
     private volatile TrackingSnapshot tracking = TrackingSnapshot.empty();
     private volatile WorkerGeoSnapshot workerGeo = WorkerGeoSnapshot.empty();
+    private volatile SafetyConfiguration safetyConfiguration = SafetyConfiguration.defaults();
     private volatile boolean active;
     private volatile FlightPlan plan;
     private volatile long startedAt;
@@ -37,13 +38,16 @@ public final class FlightRuntime {
     public void updateWorkerGeo(WorkerGeoSnapshot workerGeo) {
         this.workerGeo = workerGeo == null ? WorkerGeoSnapshot.empty() : workerGeo;
     }
+    public void updateSafetyConfiguration(SafetyConfiguration configuration) {
+        safetyConfiguration = configuration == null ? SafetyConfiguration.defaults() : configuration;
+    }
     public void updateAppliedZoom(boolean supported, float factor) {
         director.updateAppliedZoom(supported, factor);
     }
     public boolean isActive() { return active; }
 
     public SafetyDecision preflight(FlightPlan candidate) {
-        return safety.evaluate(candidate, telemetry, tracking, workerGeo, now(), now());
+        return safety.evaluate(candidate, telemetry, tracking, workerGeo, safetyConfiguration, now(), now());
     }
 
     public synchronized void start(FlightPlan candidate, DroneSession.Completion completion) {
@@ -79,7 +83,8 @@ public final class FlightRuntime {
         FlightPlan current = plan;
         if (!active || current == null) return;
         long now = now();
-        SafetyDecision decision = safety.evaluate(current, telemetry, tracking, workerGeo, now, startedAt);
+        SafetyDecision decision = safety.evaluate(current, telemetry, tracking, workerGeo,
+            safetyConfiguration, now, startedAt);
         if (decision.action == SafetyDecision.Action.STOP) {
             stop(decision.reason);
             return;

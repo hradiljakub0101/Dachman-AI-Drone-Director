@@ -8,14 +8,21 @@ public final class TargetBox {
     public final float bottom;
     public final float confidence;
     public final long observedAtMillis;
+    public final AppearanceSignature appearance;
 
     public TargetBox(float left, float top, float right, float bottom, float confidence, long observedAtMillis) {
+        this(left, top, right, bottom, confidence, observedAtMillis, null);
+    }
+
+    public TargetBox(float left, float top, float right, float bottom, float confidence,
+            long observedAtMillis, AppearanceSignature appearance) {
         this.left = clamp01(Math.min(left, right));
         this.top = clamp01(Math.min(top, bottom));
         this.right = clamp01(Math.max(left, right));
         this.bottom = clamp01(Math.max(top, bottom));
         this.confidence = clamp01(confidence);
         this.observedAtMillis = observedAtMillis;
+        this.appearance = appearance;
     }
 
     public float centerX() { return (left + right) * 0.5f; }
@@ -48,7 +55,7 @@ public final class TargetBox {
             Math.min(first.left, second.left), Math.min(first.top, second.top),
             Math.max(first.right, second.right), Math.max(first.bottom, second.bottom),
             Math.min(first.confidence, second.confidence),
-            Math.min(first.observedAtMillis, second.observedAtMillis));
+            Math.min(first.observedAtMillis, second.observedAtMillis), null);
     }
 
     private static float clamp01(float value) { return Math.max(0f, Math.min(1f, value)); }
