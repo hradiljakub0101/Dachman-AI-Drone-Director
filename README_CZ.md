@@ -2,7 +2,7 @@
 
 ## Android – kompletní supervised-flight aplikace
 
-Android verze `0.7.0` pro DJI Mini 2 obsahuje živý obraz, telemetrii, offline detekci
+Android verze `0.7.1` pro DJI Mini 2 obsahuje živý obraz, telemetrii, offline detekci
 osob EfficientDet Lite, označení Worker 1 a Worker 2, animovaný náhled trajektorie,
 jednorázové systémové ověření a skutečné řízení přes DJI Mobile SDK `4.18`.
 
@@ -34,6 +34,10 @@ vlastní nové schválení.
 Tok řízení je:
 
 `DJI video -> offline AI -> potvrzený pracovník -> letový + kamerový planner -> SafetySupervisor -> animovaný náhled -> jednorázové ověření -> Virtual Stick + gimbal + digitální zoom`
+
+Aplikace používá vlastní černobílé logo jako standardní, kulatou, adaptivní i
+monochromatickou ikonu Androidu. Zdrojový podklad a čistý master jsou uložené
+v repozitáři, takže následující buildy zachovají stejnou identitu aplikace.
 
 Pohyb kteréhokoli fyzického kniplu nebo kolečka gimbalu RC-N1 má přednost a vypne
 Virtual Stick i automatickou kameru nebo zruší probíhající automatickou akci. AI se po
