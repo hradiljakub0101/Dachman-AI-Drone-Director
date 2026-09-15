@@ -54,3 +54,44 @@ jobs:
           name: android-debug-apks
           path: androidApp/app/build/outputs/apk/*/debug/*.apk
           if-no-files-found: error
+
+  publish:
+    name: publish versioned Android downloads
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: android
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-debug-apks
+          path: downloaded-apks
+      - name: Prepare named APKs and ZIP
+        shell: bash
+        run: |
+          release_version="$(sed -n "s/^[[:space:]]*versionName '\([^']*\)'.*/\1/p" androidApp/app/build.gradle | head -n 1)"
+          test -n "$release_version"
+          test -f downloaded-apks/dji/debug/app-dji-debug.apk
+          test -f downloaded-apks/demo/debug/app-demo-debug.apk
+          mkdir -p release
+          cp downloaded-apks/dji/debug/app-dji-debug.apk "release/Dachman-AI-Drone-Director-v${release_version}-DJI.apk"
+          cp downloaded-apks/demo/debug/app-demo-debug.apk "release/Dachman-AI-Drone-Director-v${release_version}-Demo.apk"
+          (
+            cd release
+            zip -9 "Dachman-AI-Drone-Director-v${release_version}-Android.zip" "Dachman-AI-Drone-Director-v${release_version}-DJI.apk" "Dachman-AI-Drone-Director-v${release_version}-Demo.apk"
+          )
+          echo "release_version=${release_version}" >> "$GITHUB_ENV"
+          echo "release_tag=android-v${release_version}" >> "$GITHUB_ENV"
+      - name: Publish permanent GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "$release_tag" >/dev/null 2>&1; then
+            gh release edit "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes "Android DJI and demo builds verified by GitHub Actions, including launcher resources, USB/AOA integration, configured DJI key and APK signature."
+          else
+            gh release create "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes "Android DJI and demo builds verified by GitHub Actions, including launcher resources, USB/AOA integration, configured DJI key and APK signature."
+          fi
+          gh release upload "$release_tag" release/*.apk release/*.zip --clobber
