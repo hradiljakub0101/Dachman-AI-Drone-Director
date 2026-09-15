@@ -2,9 +2,15 @@
 
 ## Android – kompletní supervised-flight aplikace
 
-Android verze `0.3.0` pro DJI Mini 2 obsahuje živý obraz, telemetrii, offline detekci
+Android verze `0.7.0` pro DJI Mini 2 obsahuje živý obraz, telemetrii, offline detekci
 osob EfficientDet Lite, označení Worker 1 a Worker 2, animovaný náhled trajektorie,
 jednorázové systémové ověření a skutečné řízení přes DJI Mobile SDK `4.18`.
+
+Každý schválený filmový režim automaticky zapíná také kameramana AI. Podle pohybu
+vybraného Worker 1 nebo společného rámečku Worker 1 + Worker 2 predikuje krátký pohyb,
+udržuje kompoziční prostor, plynule naklání gimbal nahoru/dolů a nastavuje podporovaný
+digitální zoom Mini 2 v konzervativním rozsahu `1,0×–2,0×`. Horizontální centrování
+zajišťuje omezený yaw dronu, protože gimbal Mini 2 sleduje směr letadla.
 
 K dispozici jsou režimy:
 
@@ -27,11 +33,12 @@ vlastní nové schválení.
 
 Tok řízení je:
 
-`DJI video -> offline AI -> potvrzený pracovník -> omezený planner -> SafetySupervisor -> animovaný náhled -> jednorázové ověření -> Virtual Stick`
+`DJI video -> offline AI -> potvrzený pracovník -> letový + kamerový planner -> SafetySupervisor -> animovaný náhled -> jednorázové ověření -> Virtual Stick + gimbal + digitální zoom`
 
-Pohyb kteréhokoli fyzického kniplu RC-N1 má přednost a vypne Virtual Stick nebo zruší
-probíhající automatickou akci. Mini 2 nemá všesměrové vyhýbání překážkám, proto aplikace
-nenahrazuje pilota ani kontrolu volné trasy.
+Pohyb kteréhokoli fyzického kniplu nebo kolečka gimbalu RC-N1 má přednost a vypne
+Virtual Stick i automatickou kameru nebo zruší probíhající automatickou akci. AI se po
+zásahu sama znovu nezapne; vyžaduje ruční přípravu a nové potvrzení v APK. Mini 2 nemá
+všesměrové vyhýbání překážkám, proto aplikace nenahrazuje pilota ani kontrolu volné trasy.
 
 Sestavení a podpis jsou popsány v [DEVICE_SIGNING_GUIDE.md](DEVICE_SIGNING_GUIDE.md).
 Povinný test konkrétního dronu je v

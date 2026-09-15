@@ -49,7 +49,10 @@ import dji.sdk.sdkmanager.DJISDKManager;
 final class DjiConnection implements DroneSession {
     static final int PERMISSION_REQUEST = 2107;
     private static final int RC_DEAD_ZONE = 80;
+    private static final int GIMBAL_DIAL_DEAD_ZONE = 18;
     private static final long GIMBAL_INTERVAL_MILLIS = 180L;
+    private static final long ZOOM_INTERVAL_MILLIS = 400L;
+    private static final float ZOOM_EPSILON = 0.025f;
     private static final long CONNECTION_RETRY_MILLIS = 1_500L;
     private static final int MAX_CONNECTION_ATTEMPTS = 20;
     private static final long VIDEO_WATCHDOG_MILLIS = 2_500L;
@@ -92,6 +95,12 @@ final class DjiConnection implements DroneSession {
     private int surfaceWidth;
     private int surfaceHeight;
     private long lastGimbalAt;
+    private volatile long lastZoomAt;
+    private volatile float lastRequestedZoom = Float.NaN;
+    private volatile float lastAppliedZoom = CameraDirector.MIN_DIGITAL_ZOOM;
+    private volatile boolean digitalZoomSupported;
+    private volatile boolean zoomCommandPending;
+    private volatile boolean zoomFailureReported;
     private volatile long lastVideoPacketAt;
     private volatile int videoRestartAttempts;
     private volatile AircraftAction aircraftAction = AircraftAction.NONE;
@@ -155,6 +164,7 @@ final class DjiConnection implements DroneSession {
     @Override public void setListener(Listener listener) {
         this.listener = listener;
         postTelemetry();
+        postCameraAutomation();
         postAction();
     }
 
@@ -304,6 +314,13 @@ final class DjiConnection implements DroneSession {
         camera = aircraft.getCamera();
         gimbal = aircraft.getGimbal();
         airLink = aircraft.getAirLink();
+        digitalZoomSupported = camera != null && camera.isConnected()
+            && (compatibleModel || supportsDigitalZoom(camera));
+        lastRequestedZoom = Float.NaN;
+        lastAppliedZoom = CameraDirector.MIN_DIGITAL_ZOOM;
+        zoomCommandPending = false;
+        zoomFailureReported = false;
+        postCameraAutomation();
 
         if (flightController != null) flightController.setStateCallback(this::onFlightState);
         if (battery != null) battery.setStateCallback(state -> {
@@ -323,7 +340,9 @@ final class DjiConnection implements DroneSession {
         startVideoFeed();
         postStatus(compatibleModel
             ? "DJI Mini 2 připojen • RC-N1 " + componentState(remoteController)
-                + " • kamera " + componentState(camera) + " • čekám na živý obraz."
+                + " • kamera " + componentState(camera)
+                + " • AI zoom " + (digitalZoomSupported ? "OK" : "není dostupný")
+                + " • čekám na živý obraz."
             : "Připojený model není DJI Mini 2; živé řízení je uzamčeno.");
         postTelemetry();
     }
@@ -357,12 +376,17 @@ final class DjiConnection implements DroneSession {
     }
 
     private void onHardwareState(HardwareState state) {
-        boolean deflected = stickMoved(state.getLeftStick()) || stickMoved(state.getRightStick());
+        if (state == null) return;
+        boolean gimbalDialMoved = Math.abs(state.getLeftDial()) > GIMBAL_DIAL_DEAD_ZONE;
+        boolean deflected = stickMoved(state.getLeftStick()) || stickMoved(state.getRightStick())
+            || gimbalDialMoved;
         manualDeflection = deflected;
         if (!deflected || pilotOverridePending) return;
+        String pilotControl = gimbalDialMoved ? "zásah kolečkem gimbalu" : "zásah kniplem";
         if (virtualStickEnabled) {
             pilotOverridePending = true;
             virtualStickEnabled = false;
+            rotateGimbal(0f);
             FlightController current = flightController;
             if (current == null) {
                 pilotOverridePending = false;
@@ -370,7 +394,7 @@ final class DjiConnection implements DroneSession {
             } else {
                 current.setVirtualStickModeEnabled(false, error -> {
                     pilotOverridePending = false;
-                    postPilotOverride("PILOT OVERRIDE – pohyb kniplu vypnul AI řízení.");
+                    postPilotOverride("PILOT OVERRIDE – " + pilotControl + " vypnul AI řízení i kameru.");
                 });
             }
         } else if (aircraftAction != AircraftAction.NONE) {
@@ -519,6 +543,7 @@ final class DjiConnection implements DroneSession {
             lastGimbalAt = now;
             rotateGimbal(command.gimbalPitch);
         }
+        applyDigitalZoom(command.digitalZoomFactor, now);
     }
 
     private void rotateGimbal(float pitchSpeed) {
@@ -527,6 +552,44 @@ final class DjiConnection implements DroneSession {
         Rotation rotation = new Rotation.Builder().mode(RotationMode.SPEED)
             .pitch(pitchSpeed).roll(Rotation.NO_ROTATION).yaw(Rotation.NO_ROTATION).build();
         current.rotate(rotation, null);
+    }
+
+    private void applyDigitalZoom(float requestedFactor, long now) {
+        Camera current = camera;
+        if (!Float.isFinite(requestedFactor) || !digitalZoomSupported || current == null
+                || !current.isConnected() || zoomCommandPending
+                || now - lastZoomAt < ZOOM_INTERVAL_MILLIS) return;
+        float factor = Math.max(CameraDirector.MIN_DIGITAL_ZOOM,
+            Math.min(CameraDirector.MAX_DIGITAL_ZOOM, requestedFactor));
+        if (Float.isFinite(lastRequestedZoom)
+                && Math.abs(lastRequestedZoom - factor) < ZOOM_EPSILON) return;
+        lastZoomAt = now;
+        lastRequestedZoom = factor;
+        zoomCommandPending = true;
+        current.setDigitalZoomFactor(factor, error -> {
+            zoomCommandPending = false;
+            if (error == null) {
+                zoomFailureReported = false;
+                lastAppliedZoom = factor;
+                postCameraAutomation();
+                return;
+            }
+            lastRequestedZoom = Float.NaN;
+            if (!zoomFailureReported) {
+                zoomFailureReported = true;
+                postStatus("Digitální zoom Mini 2 tento režim nepřijal: " + errorText(error)
+                    + ". Automatický gimbal zůstává aktivní.");
+            }
+        });
+    }
+
+    private static boolean supportsDigitalZoom(Camera value) {
+        if (value == null || !value.isConnected()) return false;
+        try {
+            return value.isDigitalZoomSupported();
+        } catch (RuntimeException ignored) {
+            return false;
+        }
     }
 
     @Override public synchronized void disableVirtualStick(String reason, Completion completion) {
@@ -741,6 +804,13 @@ final class DjiConnection implements DroneSession {
         lastFlightState = null;
         recording = false;
         videoActive = false;
+        digitalZoomSupported = false;
+        zoomCommandPending = false;
+        zoomFailureReported = false;
+        lastRequestedZoom = Float.NaN;
+        lastAppliedZoom = CameraDirector.MIN_DIGITAL_ZOOM;
+        lastZoomAt = 0L;
+        postCameraAutomation();
         clearAircraftAction();
         postStatus(message);
         postVideo(false);
@@ -841,6 +911,16 @@ final class DjiConnection implements DroneSession {
 
     private void postCamera(boolean isRecording) {
         main.post(() -> { if (!closed && listener != null) listener.onCameraState(isRecording); });
+    }
+
+    private void postCameraAutomation() {
+        boolean supported = digitalZoomSupported;
+        float factor = lastAppliedZoom;
+        main.post(() -> {
+            if (!closed && listener != null) {
+                listener.onCameraAutomationState(supported, factor);
+            }
+        });
     }
 
     private void postAction() {

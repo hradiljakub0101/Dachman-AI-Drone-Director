@@ -33,6 +33,9 @@ public final class FlightRuntime {
 
     public void updateTelemetry(TelemetrySnapshot telemetry) { this.telemetry = telemetry; }
     public void updateTracking(TrackingSnapshot tracking) { this.tracking = tracking; }
+    public void updateAppliedZoom(boolean supported, float factor) {
+        director.updateAppliedZoom(supported, factor);
+    }
     public boolean isActive() { return active; }
 
     public SafetyDecision preflight(FlightPlan candidate) {
