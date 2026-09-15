@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 import dji.common.Stick;
 import dji.common.camera.SettingsDefinitions;
+import dji.common.camera.StorageState;
 import dji.common.error.DJIError;
 import dji.common.error.DJISDKError;
 import dji.common.flightcontroller.FlightControllerState;
@@ -74,9 +75,10 @@ final class DjiConnection implements DroneSession {
     private boolean virtualStickEnabled;
     private boolean manualDeflection;
     private boolean pilotOverridePending;
-    private boolean recording;
+    private volatile boolean recording;
     /** Prevent overlapping start/stop requests while DJI completes the prior command. */
     private boolean recordingCommandPending;
+    private volatile CameraStorageStatus cameraStorageStatus = CameraStorageStatus.disconnected();
     private volatile boolean videoActive;
     private boolean compatibleModel;
     private boolean djiUsbVisible;
@@ -166,6 +168,8 @@ final class DjiConnection implements DroneSession {
     @Override public void setListener(Listener listener) {
         this.listener = listener;
         postTelemetry();
+        postCamera(recording);
+        postCameraStorage();
         postCameraAutomation();
         postAction();
     }
@@ -318,11 +322,14 @@ final class DjiConnection implements DroneSession {
         airLink = aircraft.getAirLink();
         digitalZoomSupported = camera != null && camera.isConnected()
             && (compatibleModel || supportsDigitalZoom(camera));
+        cameraStorageStatus = camera == null || !camera.isConnected()
+            ? CameraStorageStatus.disconnected() : CameraStorageStatus.checking();
         lastRequestedZoom = Float.NaN;
         lastAppliedZoom = CameraDirector.MIN_DIGITAL_ZOOM;
         zoomCommandPending = false;
         zoomFailureReported = false;
         postCameraAutomation();
+        postCameraStorage();
 
         if (flightController != null) flightController.setStateCallback(this::onFlightState);
         if (battery != null) battery.setStateCallback(state -> {
@@ -338,6 +345,7 @@ final class DjiConnection implements DroneSession {
             recording = state.isRecording();
             postCamera(recording);
         });
+        if (camera != null) camera.setStorageStateCallBack(this::onCameraStorageState);
         videoRestartAttempts = 0;
         startVideoFeed();
         postStatus(compatibleModel
@@ -347,6 +355,18 @@ final class DjiConnection implements DroneSession {
                 + " • čekám na živý obraz."
             : "Připojený model není DJI Mini 2; živé řízení je uzamčeno.");
         postTelemetry();
+    }
+
+    private void onCameraStorageState(StorageState state) {
+        if (state == null || state.getStorageLocation() != SettingsDefinitions.StorageLocation.SDCARD) return;
+        cameraStorageStatus = CameraStorageStatus.evaluate(
+            state.isInserted(), state.isInitializing(), state.isReadOnly(), state.isFormatted(),
+            state.isFormatting(), state.isFull(), state.isVerified(), state.hasError(),
+            state.getAvailableRecordingTimeInSeconds());
+        postCameraStorage();
+        if (recording && !cameraStorageStatus.ready) {
+            postStatus("VAROVÁNÍ ZÁZNAMU: " + cameraStorageStatus.detail);
+        }
     }
 
     private void onFlightState(FlightControllerState state) {
@@ -754,6 +774,10 @@ final class DjiConnection implements DroneSession {
             postCompletion(completion, false, "Kamera není připojena.");
             return;
         }
+        if (!recording && !cameraStorageStatus.ready) {
+            postCompletion(completion, false, cameraStorageStatus.detail);
+            return;
+        }
         synchronized (this) {
             if (recordingCommandPending) {
                 postCompletion(completion, false, "Kamera právě zpracovává předchozí příkaz nahrávání.");
@@ -770,7 +794,7 @@ final class DjiConnection implements DroneSession {
             });
             return;
         }
-        current.setMode(SettingsDefinitions.CameraMode.RECORD_VIDEO, error -> {
+        setNormalVideoMode(current, error -> {
             if (error != null) {
                 synchronized (this) { recordingCommandPending = false; }
                 postCompletion(completion, false, "Režim videa nelze nastavit: " + errorText(error));
@@ -783,6 +807,22 @@ final class DjiConnection implements DroneSession {
                     startError == null ? "Nahrávání spuštěno." : "Nahrávání nelze spustit: " + errorText(startError));
             });
         });
+    }
+
+    /** Mini 2 firmware uses Flat Camera Mode when the SDK reports it as available. */
+    private void setNormalVideoMode(Camera current,
+            dji.common.util.CommonCallbacks.CompletionCallback<DJIError> completion) {
+        boolean flatModeSupported;
+        try {
+            flatModeSupported = current.isFlatCameraModeSupported();
+        } catch (RuntimeException ignored) {
+            flatModeSupported = false;
+        }
+        if (flatModeSupported) {
+            current.setFlatMode(SettingsDefinitions.FlatCameraMode.VIDEO_NORMAL, completion);
+        } else {
+            current.setMode(SettingsDefinitions.CameraMode.RECORD_VIDEO, completion);
+        }
     }
 
     @Override public void takePhoto(Completion completion) {
@@ -822,6 +862,7 @@ final class DjiConnection implements DroneSession {
         lastFlightState = null;
         recording = false;
         recordingCommandPending = false;
+        cameraStorageStatus = CameraStorageStatus.disconnected();
         videoActive = false;
         digitalZoomSupported = false;
         zoomCommandPending = false;
@@ -830,6 +871,7 @@ final class DjiConnection implements DroneSession {
         lastAppliedZoom = CameraDirector.MIN_DIGITAL_ZOOM;
         lastZoomAt = 0L;
         postCameraAutomation();
+        postCameraStorage();
         clearAircraftAction();
         postStatus(message);
         postVideo(false);
@@ -842,6 +884,7 @@ final class DjiConnection implements DroneSession {
         if (remoteController != null) remoteController.setHardwareStateCallback(null);
         if (battery != null) battery.setStateCallback(null);
         if (camera != null) camera.setSystemStateCallback(null);
+        if (camera != null) camera.setStorageStateCallBack(null);
         if (airLink != null) airLink.setUplinkSignalQualityCallback(null);
         if (videoFeed != null) {
             videoFeed.removeVideoDataListener(videoDataListener);
@@ -930,6 +973,11 @@ final class DjiConnection implements DroneSession {
 
     private void postCamera(boolean isRecording) {
         main.post(() -> { if (!closed && listener != null) listener.onCameraState(isRecording); });
+    }
+
+    private void postCameraStorage() {
+        CameraStorageStatus status = cameraStorageStatus;
+        main.post(() -> { if (!closed && listener != null) listener.onCameraStorageState(status); });
     }
 
     private void postCameraAutomation() {

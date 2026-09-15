@@ -21,13 +21,22 @@ def main() -> int:
             "Camera recording state is not exposed to and rendered by the UI", errors)
     require("toggleRecording(Completion completion)" in dji, "DJI recording entry point is missing", errors)
     require("setMode(SettingsDefinitions.CameraMode.RECORD_VIDEO" in dji,
-            "DJI video mode is not selected before recording", errors)
+            "Legacy DJI video mode fallback is missing", errors)
+    require("isFlatCameraModeSupported" in dji
+            and "setFlatMode(SettingsDefinitions.FlatCameraMode.VIDEO_NORMAL" in dji,
+            "Flat Camera Mode is not used for Mini 2 firmware", errors)
     require("startRecordVideo" in dji and "stopRecordVideo" in dji,
             "DJI start/stop recording callbacks are incomplete", errors)
     require("recordingCommandPending" in dji and "Kamera právě zpracovává" in dji,
             "Overlapping recording commands are not guarded", errors)
     require("postCamera(true)" in dji and "postCamera(false)" in dji,
             "Successful start/stop does not immediately synchronize UI state", errors)
+    require("setStorageStateCallBack" in dji and "CameraStorageStatus.evaluate" in dji,
+            "Aircraft microSD state is not monitored", errors)
+    require("!cameraStorageStatus.ready" in dji,
+            "Recording is not blocked when the aircraft microSD card is unavailable", errors)
+    require("onCameraStorageState" in session and "onCameraStorageState" in ui,
+            "Aircraft microSD status is not exposed in the UI", errors)
     require("toggleRecording(Completion completion)" in demo,
             "Demo flavor does not implement the recording contract", errors)
 

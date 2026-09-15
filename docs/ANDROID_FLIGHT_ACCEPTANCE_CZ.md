@@ -9,7 +9,12 @@ ověří konkrétní telefon, kabel, RC-N1, firmware, DJI účet a Mini 2.
 - Nainstaluj pouze DJI variantu `cz.dachman.drone.director` s odpovídajícím DJI App Key.
 - Připoj zapnutý RC-N1 a Mini 2, udělej oprávnění a ověř stav `SDK OK / DRON OK`.
 - Ověř živý obraz, změnu baterie, GNSS, signálu a letového režimu.
-- Ověř spuštění a zastavení záznamu a jednu fotografii na SD kartu.
+- V horní liště musí být `SD OK` nebo `SD OK?`. Vyjmi kartu a ověř, že se zobrazí
+  `SD CHYBÍ`, tlačítko `REC` se zablokuje a aplikace nahlásí konkrétní důvod.
+- Vlož zapisovatelnou kartu s volným místem. Stiskni `REC`, ověř změnu na `STOP`,
+  červený indikátor kamery Mini 2 a rostoucí čas nahrávání. Stiskni `STOP`, vypni dron,
+  vyjmi kartu a ověř nový soubor MP4 v adresáři `DCIM/100MEDIA` (nebo v aktuální
+  složce `DCIM`, kterou vytvořil firmware). Stejně ověř jednu fotografii.
 - V obrazu označ Worker 1 a Worker 2 a ověř, že rámečky drží zvolenou osobu při pohybu.
 - Ověř, že stav `KAMERA AI` zůstává vypnutý v MANUAL a přejde do `PŘIPRAVENA` až po
   potvrzení Worker 1. Digitální zoom Mini 2 je záměrně omezen na `1,0×–2,0×`.
@@ -55,6 +60,8 @@ je `PŘESNÝ` a výškový strop osm metrů.
 - Po ztrátě cíle aplikace neposílá nenulové pohybové povely.
 - HOLD, ABORT, odchod aplikace do pozadí a odpojení zastaví Virtual Stick.
 - Vzlet, přistání a RTH dokončí DJI letový kontrolér a stav v aplikaci odpovídá telemetrii.
+- `REC` se nesmí aktivovat bez připravené microSD karty. Zelený stav tlačítka není
+  důkazem sám o sobě: po zastavení musí na kartě existovat přehratelný nový soubor MP4.
 
 Jakákoli odchylka znamená `FAIL`: další letové režimy se netestují, problém se zaznamená
 a aplikace se vrací do vývoje.

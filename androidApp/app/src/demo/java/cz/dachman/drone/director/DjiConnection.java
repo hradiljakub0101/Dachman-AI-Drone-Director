@@ -16,6 +16,8 @@ final class DjiConnection implements DroneSession {
             listener.onStatus("Offline náhled. Nainstaluj DJI variantu pro připojení Mini 2.");
             listener.onTelemetry(TelemetrySnapshot.disconnected());
             listener.onVideoState(false);
+            listener.onCameraState(false);
+            listener.onCameraStorageState(CameraStorageStatus.disconnected());
             listener.onCameraAutomationState(false, CameraDirector.MIN_DIGITAL_ZOOM);
             listener.onAircraftAction("ŽÁDNÁ", false);
         }

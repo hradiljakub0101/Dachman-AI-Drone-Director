@@ -78,6 +78,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private TextView aircraftActionText;
     private TextView authorityText;
     private TextView cameraDirectorText;
+    private TextView cameraStorageBadge;
     private LinearLayout approvalCard;
     private CheckBox readinessCheck;
     private Button approveButton;
@@ -99,6 +100,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private boolean sampling;
     private boolean aircraftActionActive;
     private boolean cameraAutomationActive;
+    private boolean cameraRecording;
+    private CameraStorageStatus cameraStorageStatus = CameraStorageStatus.disconnected();
     private boolean cameraZoomAvailable;
     private float cameraZoomFactor = CameraDirector.MIN_DIGITAL_ZOOM;
     /** Guided mission: every composition still requires biometric approval and can be aborted by RC. */
@@ -226,6 +229,15 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         topHud.addView(connect, compactButtonParams(dp(52)));
         recordButton = button("● REC", RED, () -> dji.toggleRecording(this::showCompletion));
         topHud.addView(recordButton, compactButtonParams(dp(58)));
+
+        cameraStorageBadge = text("SD —", 8, Color.WHITE, true);
+        cameraStorageBadge.setGravity(Gravity.CENTER);
+        cameraStorageBadge.setBackground(card(Color.argb(190, 17, 48, 61), 8, MUTED));
+        cameraStorageBadge.setOnClickListener(view -> showStatus(cameraStorageStatus.detail));
+        LinearLayout.LayoutParams storageParams = new LinearLayout.LayoutParams(dp(52), dp(34));
+        storageParams.setMargins(dp(4), 0, 0, 0);
+        topHud.addView(cameraStorageBadge, storageParams);
+
         Button photo = button("FOTO", PANEL_LIGHT, () -> dji.takePhoto(this::showCompletion));
         topHud.addView(photo, compactButtonParams(dp(54)));
 
@@ -845,9 +857,32 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     @Override public void onCameraState(boolean recording) {
         ui(() -> {
-            recordButton.setText(recording ? "■ STOP" : "● REC");
-            styleButton(recordButton, recording ? ORANGE : RED);
+            cameraRecording = recording;
+            renderRecordingUi();
         });
+    }
+
+    @Override public void onCameraStorageState(CameraStorageStatus status) {
+        if (status == null) return;
+        ui(() -> {
+            cameraStorageStatus = status;
+            renderRecordingUi();
+        });
+    }
+
+    private void renderRecordingUi() {
+        boolean recordControlAvailable = cameraRecording || cameraStorageStatus.ready;
+        recordButton.setEnabled(recordControlAvailable);
+        recordButton.setText(cameraRecording ? "■ STOP" : "● REC");
+        styleButton(recordButton, cameraRecording ? ORANGE
+            : cameraStorageStatus.ready ? RED : PANEL_LIGHT);
+
+        cameraStorageBadge.setText(cameraStorageStatus.shortLabel);
+        cameraStorageBadge.setTextColor(cameraStorageStatus.ready ? BACKGROUND : Color.WHITE);
+        int storageColor = cameraStorageStatus.ready ? GREEN
+            : "SD …".equals(cameraStorageStatus.shortLabel) ? ORANGE : RED;
+        cameraStorageBadge.setBackground(card(storageColor, 8, storageColor));
+        cameraStorageBadge.setContentDescription(cameraStorageStatus.detail);
     }
 
     @Override public void onCameraAutomationState(boolean digitalZoomSupported,
