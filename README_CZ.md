@@ -7,6 +7,12 @@ tagu na obrazový rámeček Worker 1/2, filtrovanou predikci pohybu a bezpečnos
 Obrazové sledování zůstává hlavním zdrojem kompozice; GNSS nebo UWB je pouze pomocná
 vrstva. Technický protokol je v [docs/WORKER_POSITION_PROTOCOL_CZ.md](docs/WORKER_POSITION_PROTOCOL_CZ.md).
 
+Verze nula celá deset navíc zobrazuje oba pracovníky na mapě, umožňuje zakreslit obvod
+střechy a zakázanou zónu, kalibrovat minimální odstup, modelovat výšku a sklon střechy,
+blokuje přelet nad pracovníkem, rozlišuje stav OBRAZ/TAG/FÚZE/HOLD a ukládá auditní
+protokol rozhodnutí AI. Identitu mezi snímky podporuje barevný podpis hlavy, horního a
+spodního oblečení; nejde o certifikovaný detektor ochranné přilby.
+
 ## Android – kompletní supervised-flight aplikace
 
 Android verze `0.8.0` pro DJI Mini 2 obsahuje živý obraz, telemetrii, offline detekci

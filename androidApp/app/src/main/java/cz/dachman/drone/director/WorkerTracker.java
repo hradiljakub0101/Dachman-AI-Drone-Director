@@ -17,7 +17,7 @@ import org.tensorflow.lite.support.label.Category;
 import org.tensorflow.lite.task.vision.detector.Detection;
 import org.tensorflow.lite.task.vision.detector.ObjectDetector;
 
-/** Offline COCO person detection with identity continuity based on overlap and centre distance. */
+/** Offline person detection with continuity from motion, overlap and clothing/head colours. */
 public final class WorkerTracker {
     public interface Listener {
         void onTrackerReady();
@@ -76,8 +76,10 @@ public final class WorkerTracker {
                     Category category = categories.get(0);
                     if (!"person".equalsIgnoreCase(category.getLabel())) continue;
                     RectF box = detection.getBoundingBox();
-                    candidates.add(new TargetBox(box.left / bitmap.getWidth(), box.top / bitmap.getHeight(),
-                        box.right / bitmap.getWidth(), box.bottom / bitmap.getHeight(), category.getScore(), now));
+                    float left = box.left / bitmap.getWidth(), top = box.top / bitmap.getHeight();
+                    float right = box.right / bitmap.getWidth(), bottom = box.bottom / bitmap.getHeight();
+                    AppearanceSignature appearance = AppearanceSignature.from(bitmap, left, top, right, bottom);
+                    candidates.add(new TargetBox(left, top, right, bottom, category.getScore(), now, appearance));
                 }
                 TargetBox nextPrimary = match(primaryLock, candidates, null);
                 TargetBox nextSecondary = match(secondaryLock, candidates, nextPrimary);
@@ -133,8 +135,11 @@ public final class WorkerTracker {
             if (sameCandidate(candidate, excluded)) continue;
             float distance = locked.centerDistance(candidate);
             float overlap = locked.intersectionOverUnion(candidate);
-            if (distance > 0.32f && overlap < 0.05f) continue;
-            float score = overlap * 0.72f + (1f - Math.min(1f, distance)) * 0.28f;
+            float appearance = locked.appearance == null ? 0.5f
+                : locked.appearance.similarity(candidate.appearance);
+            if (distance > 0.32f && overlap < 0.05f && appearance < 0.78f) continue;
+            float score = overlap * 0.45f + (1f - Math.min(1f, distance)) * 0.20f
+                + appearance * 0.35f;
             if (score > bestScore) { bestScore = score; bestTarget = candidate; }
         }
         return bestTarget;
