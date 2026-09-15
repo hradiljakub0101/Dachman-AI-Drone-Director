@@ -75,6 +75,8 @@ final class DjiConnection implements DroneSession {
     private boolean manualDeflection;
     private boolean pilotOverridePending;
     private boolean recording;
+    /** Prevent overlapping start/stop requests while DJI completes the prior command. */
+    private boolean recordingCommandPending;
     private volatile boolean videoActive;
     private boolean compatibleModel;
     private boolean djiUsbVisible;
@@ -752,18 +754,34 @@ final class DjiConnection implements DroneSession {
             postCompletion(completion, false, "Kamera není připojena.");
             return;
         }
+        synchronized (this) {
+            if (recordingCommandPending) {
+                postCompletion(completion, false, "Kamera právě zpracovává předchozí příkaz nahrávání.");
+                return;
+            }
+            recordingCommandPending = true;
+        }
         if (recording) {
-            current.stopRecordVideo(error -> postCompletion(completion, error == null,
-                error == null ? "Nahrávání zastaveno." : "Nahrávání nelze zastavit: " + errorText(error)));
+            current.stopRecordVideo(error -> {
+                synchronized (this) { recordingCommandPending = false; }
+                if (error == null) { recording = false; postCamera(false); }
+                postCompletion(completion, error == null,
+                    error == null ? "Nahrávání zastaveno." : "Nahrávání nelze zastavit: " + errorText(error));
+            });
             return;
         }
         current.setMode(SettingsDefinitions.CameraMode.RECORD_VIDEO, error -> {
             if (error != null) {
+                synchronized (this) { recordingCommandPending = false; }
                 postCompletion(completion, false, "Režim videa nelze nastavit: " + errorText(error));
                 return;
             }
-            current.startRecordVideo(startError -> postCompletion(completion, startError == null,
-                startError == null ? "Nahrávání spuštěno." : "Nahrávání nelze spustit: " + errorText(startError)));
+            current.startRecordVideo(startError -> {
+                synchronized (this) { recordingCommandPending = false; }
+                if (startError == null) { recording = true; postCamera(true); }
+                postCompletion(completion, startError == null,
+                    startError == null ? "Nahrávání spuštěno." : "Nahrávání nelze spustit: " + errorText(startError));
+            });
         });
     }
 
@@ -803,6 +821,7 @@ final class DjiConnection implements DroneSession {
         signalPercent = -1;
         lastFlightState = null;
         recording = false;
+        recordingCommandPending = false;
         videoActive = false;
         digitalZoomSupported = false;
         zoomCommandPending = false;
