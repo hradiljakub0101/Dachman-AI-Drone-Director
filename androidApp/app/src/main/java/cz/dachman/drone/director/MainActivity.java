@@ -2,7 +2,9 @@ package cz.dachman.drone.director;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.BroadcastReceiver;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
@@ -13,6 +15,7 @@ import android.hardware.biometrics.BiometricManager;
 import android.hardware.biometrics.BiometricPrompt;
 import android.hardware.usb.UsbManager;
 import android.os.Bundle;
+import android.os.Build;
 import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
@@ -24,6 +27,7 @@ import android.view.WindowManager;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.GridLayout;
 import android.widget.LinearLayout;
@@ -51,12 +55,16 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private static final int FRAME_HEIGHT = 216;
     private static final int CONTROL_DRAWER_DP = 360;
     private static final int MAP_DRAWER_DP = 390;
+    public static final String ACTION_WORKER_POSITION = "cz.dachman.drone.director.WORKER_POSITION";
+    public static final String WORKER_POSITION_PERMISSION =
+        "cz.dachman.drone.director.permission.WORKER_POSITION";
 
     private enum PendingKind { NONE, MODE, TAKEOFF, EMERGENCY_LANDING, RETURN_HOME, FULL_MISSION }
 
     private final ApprovalGate gate = new ApprovalGate();
     private final ControlAuthority authority = new ControlAuthority();
     private final HudPanelState hudPanels = new HudPanelState();
+    private final WorkerPositionRegistry workerPositions = new WorkerPositionRegistry();
     private final Handler main = new Handler(Looper.getMainLooper());
     private CancellationSignal authentication;
     private DjiConnection dji;
@@ -74,6 +82,9 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private TextView statusText;
     private TextView aiText;
     private TextView targetText;
+    private TextView workerPositionText;
+    private EditText workerOneId;
+    private EditText workerTwoId;
     private TextView heightText;
     private TextView commandText;
     private TextView pendingText;
@@ -113,6 +124,25 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private float cameraZoomFactor = CameraDirector.MIN_DIGITAL_ZOOM;
     /** Guided mission: every composition still requires biometric approval and can be aborted by RC. */
     private boolean missionActive;
+    private boolean workerReceiverRegistered;
+    private final BroadcastReceiver workerPositionReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (intent == null || !ACTION_WORKER_POSITION.equals(intent.getAction())) return;
+            String id = intent.getStringExtra("worker_id");
+            double latitude = intent.getDoubleExtra("latitude", Double.NaN);
+            double longitude = intent.getDoubleExtra("longitude", Double.NaN);
+            float accuracy = intent.getFloatExtra("accuracy_meters", Float.NaN);
+            String sourceName = intent.getStringExtra("source");
+            WorkerPositionFix.Source source = "UWB_FUSED".equals(sourceName)
+                ? WorkerPositionFix.Source.UWB_FUSED : WorkerPositionFix.Source.PHONE_GNSS;
+            if (workerPositions.update(id, latitude, longitude, accuracy,
+                    System.nanoTime() / 1_000_000L, source)) {
+                publishWorkerPositions();
+            } else {
+                showStatus("Polohová zpráva pracovníka byla odmítnuta jako neplatná.");
+            }
+        }
+    };
     private int missionIndex;
     private final FlightMode[] missionModes = new FlightMode[] {
         FlightMode.FOLLOW, FlightMode.ORBIT_RIGHT, FlightMode.PULL_AWAY, FlightMode.REVEAL_UP
@@ -158,6 +188,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         dji = new DjiConnection(this);
         runtime = new FlightRuntime(dji, this);
         tracker = new WorkerTracker(this, this);
+        registerWorkerPositionReceiver();
         dji.setListener(this);
         if (video.isAvailable()) dji.attachVideo(video.getSurfaceTexture(), video.getWidth(), video.getHeight());
         if (!handleUsbIntent(getIntent())) dji.connect();
@@ -361,6 +392,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         controls.addView(workerRow);
         Button clearWorkers = button("ZRUŠIT VÝBĚR PRACOVNÍKŮ", PANEL_LIGHT, () -> {
             tracker.clearSelections();
+            workerPositions.clear();
+            publishWorkerPositions();
             missionActive = false;
             main.removeCallbacks(missionPrompt);
             if (runtime != null) runtime.hold("Cíl zrušen – HOLD");
@@ -370,6 +403,25 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         });
         controls.addView(clearWorkers, fullButtonParams());
         selectWorkerSlot(1);
+
+        section(controls, "POLOHOVÉ TAGY – VOLITELNÁ HYBRIDNÍ OCHRANA");
+        workerPositionText = text("GPS/UWB: bez spárovaných tagů", 9, MUTED, true);
+        controls.addView(workerPositionText);
+        workerOneId = workerIdInput("ID tagu Worker 1");
+        controls.addView(workerOneId);
+        controls.addView(button("SPÁROVAT TAG S WORKER 1", GREEN,
+            () -> bindWorkerPosition(1, workerOneId.getText().toString())), fullButtonParams());
+        workerTwoId = workerIdInput("ID tagu Worker 2");
+        controls.addView(workerTwoId);
+        controls.addView(button("SPÁROVAT TAG S WORKER 2", ORANGE,
+            () -> bindWorkerPosition(2, workerTwoId.getText().toString())), fullButtonParams());
+        controls.addView(button("ODPOJIT POLOHOVÉ TAGY", PANEL_LIGHT, () -> {
+            workerPositions.clear();
+            publishWorkerPositions();
+            showStatus("Polohové tagy odpojeny; zůstává pouze obrazové sledování.");
+        }), fullButtonParams());
+        controls.addView(text("Po spárování jsou aktuální a přesná data tagu povinná; jinak AI přejde do HOLD.",
+            8, MUTED, false));
 
         section(controls, "VŠECHNY REŽIMY LETU");
         GridLayout modeGrid = grid();
@@ -1103,7 +1155,56 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         if (tracker != null) tracker.close();
         if (runtime != null) runtime.close();
         if (dji != null) dji.close();
+        if (workerReceiverRegistered) {
+            unregisterReceiver(workerPositionReceiver);
+            workerReceiverRegistered = false;
+        }
         super.onDestroy();
+    }
+
+    private void registerWorkerPositionReceiver() {
+        IntentFilter filter = new IntentFilter(ACTION_WORKER_POSITION);
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(workerPositionReceiver, filter, WORKER_POSITION_PERMISSION, main,
+                Context.RECEIVER_EXPORTED);
+        } else {
+            registerReceiver(workerPositionReceiver, filter, WORKER_POSITION_PERMISSION, main);
+        }
+        workerReceiverRegistered = true;
+    }
+
+    private void bindWorkerPosition(int slot, String id) {
+        if (!workerPositions.bind(slot, id)) {
+            showStatus("Tag není přijatý, neexistuje nebo je už přiřazen druhému pracovníkovi.");
+            return;
+        }
+        publishWorkerPositions();
+        showStatus("Polohový tag byl bezpečně spárován s Worker " + slot + ".");
+    }
+
+    private void publishWorkerPositions() {
+        WorkerGeoSnapshot geo = workerPositions.snapshot();
+        if (runtime != null) runtime.updateWorkerGeo(geo);
+        ui(() -> {
+            if (workerPositionText == null) return;
+            String first = geo.primaryId.isEmpty() ? "—" : geo.primaryId
+                + (geo.primary == null ? " čeká" : " " + Math.round(geo.primary.accuracyMeters) + " m");
+            String second = geo.secondaryId.isEmpty() ? "—" : geo.secondaryId
+                + (geo.secondary == null ? " čeká" : " " + Math.round(geo.secondary.accuracyMeters) + " m");
+            workerPositionText.setText("GPS/UWB • W1 " + first + " • W2 " + second);
+            workerPositionText.setTextColor(geo.hasAnyBinding() ? GREEN : MUTED);
+        });
+    }
+
+    private EditText workerIdInput(String hint) {
+        EditText input = new EditText(this);
+        input.setHint(hint);
+        input.setSingleLine(true);
+        input.setTextColor(Color.WHITE);
+        input.setHintTextColor(MUTED);
+        input.setTextSize(10);
+        input.setBackgroundTintList(ColorStateList.valueOf(CYAN));
+        return input;
     }
 
     private void showStatus(String message) {

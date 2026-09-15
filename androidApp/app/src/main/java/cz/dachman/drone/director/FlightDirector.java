@@ -5,16 +5,28 @@ public final class FlightDirector {
     private float referenceTargetHeight = 0.3f;
     private FlightCommand previous = FlightCommand.ZERO;
     private final CameraDirector cameraDirector = new CameraDirector();
+    private final HybridFollowController hybridFollow = new HybridFollowController();
 
     public void begin(FlightPlan plan, TrackingSnapshot tracking) {
+        begin(plan, TelemetrySnapshot.disconnected(), tracking, WorkerGeoSnapshot.empty());
+    }
+
+    public void begin(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking,
+            WorkerGeoSnapshot geo) {
         TargetBox target = tracking.targetFor(plan.mode);
         cameraDirector.begin(plan, tracking);
+        hybridFollow.begin(telemetry, geo == null ? null : geo.targetFor(plan.mode));
         float zoom = Math.max(CameraDirector.MIN_DIGITAL_ZOOM, cameraDirector.appliedZoomFactor());
         referenceTargetHeight = target == null ? 0.3f : Math.max(0.08f, target.height() / zoom);
         previous = FlightCommand.ZERO;
     }
 
     public FlightCommand command(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking) {
+        return command(plan, telemetry, tracking, WorkerGeoSnapshot.empty());
+    }
+
+    public FlightCommand command(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking,
+            WorkerGeoSnapshot geo) {
         TargetBox target = tracking.targetFor(plan.mode);
         if (target == null) return FlightCommand.ZERO;
 
@@ -74,6 +86,9 @@ public final class FlightDirector {
         if (telemetry.altitudeMeters >= plan.level.maximumAltitudeMeters && vertical > 0f) vertical = 0f;
         FlightCommand requested = new FlightCommand(pitch, roll, yaw, vertical,
             camera.gimbalPitch, camera.digitalZoomFactor);
+        if (geo != null && geo.requiredReliable(plan.mode, System.nanoTime() / 1_000_000L)) {
+            requested = hybridFollow.blend(requested, profile, telemetry, geo.targetFor(plan.mode));
+        }
         previous = smooth(previous, requested, 0.22f);
         return previous;
     }
@@ -85,6 +100,7 @@ public final class FlightDirector {
     public void reset() {
         previous = FlightCommand.ZERO;
         cameraDirector.resetMotion();
+        hybridFollow.reset();
     }
 
     private static FlightCommand smooth(FlightCommand old, FlightCommand requested, float alpha) {

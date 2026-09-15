@@ -17,6 +17,7 @@ public final class FlightRuntime {
     private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor();
     private volatile TelemetrySnapshot telemetry = TelemetrySnapshot.disconnected();
     private volatile TrackingSnapshot tracking = TrackingSnapshot.empty();
+    private volatile WorkerGeoSnapshot workerGeo = WorkerGeoSnapshot.empty();
     private volatile boolean active;
     private volatile FlightPlan plan;
     private volatile long startedAt;
@@ -33,13 +34,16 @@ public final class FlightRuntime {
 
     public void updateTelemetry(TelemetrySnapshot telemetry) { this.telemetry = telemetry; }
     public void updateTracking(TrackingSnapshot tracking) { this.tracking = tracking; }
+    public void updateWorkerGeo(WorkerGeoSnapshot workerGeo) {
+        this.workerGeo = workerGeo == null ? WorkerGeoSnapshot.empty() : workerGeo;
+    }
     public void updateAppliedZoom(boolean supported, float factor) {
         director.updateAppliedZoom(supported, factor);
     }
     public boolean isActive() { return active; }
 
     public SafetyDecision preflight(FlightPlan candidate) {
-        return safety.evaluate(candidate, telemetry, tracking, now(), now());
+        return safety.evaluate(candidate, telemetry, tracking, workerGeo, now(), now());
     }
 
     public synchronized void start(FlightPlan candidate, DroneSession.Completion completion) {
@@ -51,7 +55,7 @@ public final class FlightRuntime {
             return;
         }
         final long challenge = ++revision;
-        director.begin(candidate, tracking);
+        director.begin(candidate, telemetry, tracking, workerGeo);
         session.enableVirtualStick((success, message) -> {
             if (challenge != revision || closed) {
                 if (success) session.disableVirtualStick("Pozdní spuštění bylo zrušeno.", (ignored, detail) -> {});
@@ -75,7 +79,7 @@ public final class FlightRuntime {
         FlightPlan current = plan;
         if (!active || current == null) return;
         long now = now();
-        SafetyDecision decision = safety.evaluate(current, telemetry, tracking, now, startedAt);
+        SafetyDecision decision = safety.evaluate(current, telemetry, tracking, workerGeo, now, startedAt);
         if (decision.action == SafetyDecision.Action.STOP) {
             stop(decision.reason);
             return;
@@ -88,7 +92,7 @@ public final class FlightRuntime {
             return;
         }
         holdSince = 0L;
-        FlightCommand command = director.command(current, telemetry, tracking);
+        FlightCommand command = director.command(current, telemetry, tracking, workerGeo);
         session.sendCommand(command);
         emit("AKTIVNÍ: " + current.mode.label, command);
     }

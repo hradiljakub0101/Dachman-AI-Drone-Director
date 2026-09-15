@@ -7,9 +7,16 @@ public final class SafetySupervisor {
     public static final int MINIMUM_SIGNAL_PERCENT = 20;
     public static final long TARGET_HOLD_AFTER_MILLIS = 900L;
     public static final long TARGET_STOP_AFTER_MILLIS = 2_200L;
+    public static final double MINIMUM_WORKER_STANDOFF_METERS = 6d;
+    public static final double MAXIMUM_WORKER_DISTANCE_METERS = 50d;
 
     public SafetyDecision evaluate(FlightPlan plan, TelemetrySnapshot telemetry,
             TrackingSnapshot tracking, long nowMillis, long startedAtMillis) {
+        return evaluate(plan, telemetry, tracking, WorkerGeoSnapshot.empty(), nowMillis, startedAtMillis);
+    }
+
+    public SafetyDecision evaluate(FlightPlan plan, TelemetrySnapshot telemetry,
+            TrackingSnapshot tracking, WorkerGeoSnapshot geo, long nowMillis, long startedAtMillis) {
         if (plan == null || plan.mode == FlightMode.HOLD) return SafetyDecision.stop("Nebyl zvolen letový režim.");
         if (!telemetry.sdkRegistered) return SafetyDecision.stop("DJI SDK není zaregistrováno.");
         if (!telemetry.connected) return SafetyDecision.stop("Dron nebo ovladač není připojen.");
@@ -41,6 +48,22 @@ public final class SafetySupervisor {
             if (age > TARGET_STOP_AFTER_MILLIS) return SafetyDecision.stop("AI ztratila sledovaný cíl.");
             if (age > TARGET_HOLD_AFTER_MILLIS) return SafetyDecision.hold("AI dočasně nevidí cíl – HOLD.");
             if (confidence < 0.35f) return SafetyDecision.hold("Nízká jistota rozpoznání pracovníka.");
+        }
+        if (geo != null && geo.hasAnyBinding()) {
+            if (!geo.requiredBound(plan.mode)) return SafetyDecision.hold("Chybí polohový identifikátor pracovníka.");
+            if (!geo.requiredReliable(plan.mode, nowMillis)) {
+                return SafetyDecision.hold("Polohový tag je nepřesný nebo neposílá aktuální data.");
+            }
+            if (!telemetry.hasAircraftLocation()) return SafetyDecision.hold("Čekám na GPS polohu dronu.");
+            WorkerPositionFix worker = geo.targetFor(plan.mode);
+            double distance = HybridFollowController.distanceMeters(telemetry.aircraftLatitude,
+                telemetry.aircraftLongitude, worker.latitude, worker.longitude);
+            if (distance < MINIMUM_WORKER_STANDOFF_METERS) {
+                return SafetyDecision.stop("Dron je uvnitř bezpečnostního odstupu od pracovníka.");
+            }
+            if (distance > MAXIMUM_WORKER_DISTANCE_METERS) {
+                return SafetyDecision.hold("Pracovník je mimo schválený sledovací koridor.");
+            }
         }
         return SafetyDecision.allow();
     }
