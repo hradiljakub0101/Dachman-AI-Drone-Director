@@ -11,6 +11,8 @@ ověří konkrétní telefon, kabel, RC-N1, firmware, DJI účet a Mini 2.
 - Ověř živý obraz, změnu baterie, GNSS, signálu a letového režimu.
 - Ověř spuštění a zastavení záznamu a jednu fotografii na SD kartu.
 - V obrazu označ Worker 1 a Worker 2 a ověř, že rámečky drží zvolenou osobu při pohybu.
+- Ověř, že stav `KAMERA AI` zůstává vypnutý v MANUAL a přejde do `PŘIPRAVENA` až po
+  potvrzení Worker 1. Digitální zoom Mini 2 je záměrně omezen na `1,0×–2,0×`.
 - Zkus schválení, odmítnutí, zrušení a zamknutí telefonu. Bez úspěšné biometrie nebo
   kódu se nesmí spustit žádná akce.
 
@@ -22,16 +24,23 @@ je `PŘESNÝ` a výškový strop osm metrů.
 
 1. Potvrď volný prostor, zvol `VZLET` a projdi systémovým ověřením.
 2. Očekávej automatický vzlet do visu DJI a stav bez aktivního Virtual Stick.
-3. Označ Worker 1, zvol `STATICKÉ SLEDOVÁNÍ`, schval a ověř jen yaw/gimbal.
-4. Aktivuj `FOLLOW` a lehce vychyl kterýkoli fyzický knipl. Do jedné periody řízení,
+3. Označ Worker 1, zvol `STATICKÉ SLEDOVÁNÍ`, schval a ověř yaw/gimbal. Pracovník se
+   pomalu přesune nahoru a dolů v obrazu: gimbal se musí plynule vrátit ke kompozici,
+   v mrtvé zóně zastavit a nesmí kmitat.
+4. Nech pracovníka bezpečně změnit vzdálenost. Ověř postupné kroky digitálního zoomu,
+   oddálení u okraje snímku a zobrazenou hodnotu `ZOOM`. Pokud daný video režim povel
+   odmítne, aplikace to musí oznámit a ponechat automatický gimbal aktivní.
+5. Aktivuj `FOLLOW` a lehce vychyl kterýkoli fyzický knipl. Do jedné periody řízení,
    tedy přibližně sta milisekund, se musí zobrazit `PILOT OVERRIDE` a Virtual Stick vypnout.
-5. Ověř ztrátu cíle: přibližně po devíti stech milisekundách musí přijít HOLD a po
+6. Režim znovu ručně připrav, spusť jej a otoč kolečkem gimbalu RC-N1. Očekávej stejné
+   trvalé převzetí pilotem; AI kamera se sama nesmí znovu zapnout.
+7. Ověř ztrátu cíle: přibližně po devíti stech milisekundách musí přijít HOLD a po
    zhruba dvou celých dvou desetinách sekundy úplné ukončení režimu.
-6. Postupně otestuj statické sledování, Follow, Duo Follow, oblet vlevo, oblet vpravo,
+8. Postupně otestuj statické sledování, Follow, Duo Follow, oblet vlevo, oblet vpravo,
    odjezd, stoupavé odhalení a režim lana. Vždy začni profilem `PŘESNÝ`.
-7. Zvol `PŘISTÁNÍ`, potvrď kontrolu prostoru a ověř. Aplikace musí zahájit sestup a
+9. Zvol `PŘISTÁNÍ`, potvrď kontrolu prostoru a ověř. Aplikace musí zahájit sestup a
    při požadavku DJI potvrdit závěrečné dosednutí pod třicet centimetrů.
-8. V dalším letu ověř `NÁVRAT DOMŮ` až po kontrole domovského bodu a bezpečné RTH výšky.
+10. V dalším letu ověř `NÁVRAT DOMŮ` až po kontrole domovského bodu a bezpečné RTH výšky.
    Během celé trasy drž přímý dohled a připravený ovladač.
 
 ## Kritéria PASS
@@ -40,6 +49,9 @@ je `PŘESNÝ` a výškový strop osm metrů.
 - Nízká baterie, failsafe, probíhající RTH, silný vítr, slabý signál nebo překročený
   zvolený strop zablokují filmový režim.
 - Pohyb kniplu ukončí filmový režim nebo zruší právě probíhající automatickou akci.
+- Kolečko gimbalu ukončí kameru AI i filmový režim a vyžádá ruční opětovnou přípravu.
+- Automatický gimbal nepřekročí profilový limit a zoom nepřekročí `2,0×`; u okraje
+  záběru musí algoritmus přednostně oddálit.
 - Po ztrátě cíle aplikace neposílá nenulové pohybové povely.
 - HOLD, ABORT, odchod aplikace do pozadí a odpojení zastaví Virtual Stick.
 - Vzlet, přistání a RTH dokončí DJI letový kontrolér a stav v aplikaci odpovídá telemetrii.

@@ -77,6 +77,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private TextView pendingText;
     private TextView aircraftActionText;
     private TextView authorityText;
+    private TextView cameraDirectorText;
     private LinearLayout approvalCard;
     private CheckBox readinessCheck;
     private Button approveButton;
@@ -97,6 +98,9 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private boolean videoActive;
     private boolean sampling;
     private boolean aircraftActionActive;
+    private boolean cameraAutomationActive;
+    private boolean cameraZoomAvailable;
+    private float cameraZoomFactor = CameraDirector.MIN_DIGITAL_ZOOM;
     /** Guided mission: every composition still requires biometric approval and can be aborted by RC. */
     private boolean missionActive;
     private int missionIndex;
@@ -257,6 +261,16 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         authorityParams.setMargins(dp(8), dp(112), 0, 0);
         cameraArea.addView(authorityText, authorityParams);
 
+        cameraDirectorText = text("KAMERA AI • VYPNUTA", 9, MUTED, true);
+        cameraDirectorText.setGravity(Gravity.CENTER_VERTICAL);
+        cameraDirectorText.setPadding(dp(9), 0, dp(9), 0);
+        cameraDirectorText.setBackground(card(Color.argb(105, 5, 17, 24), 8,
+            Color.argb(145, 151, 177, 188)));
+        FrameLayout.LayoutParams cameraDirectorParams = new FrameLayout.LayoutParams(
+            dp(300), dp(29), Gravity.TOP | Gravity.LEFT);
+        cameraDirectorParams.setMargins(dp(8), dp(153), 0, 0);
+        cameraArea.addView(cameraDirectorText, cameraDirectorParams);
+
         flightRadar = new FlightRadarView(this);
         FrameLayout.LayoutParams radarParams = new FrameLayout.LayoutParams(
             dp(92), dp(100), Gravity.TOP | Gravity.RIGHT);
@@ -413,7 +427,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         stopRow.addView(button("HOLD", ORANGE, this::hold), weightedButtonParams());
         stopRow.addView(button("ABORT", RED, this::abort), weightedButtonParams());
         controls.addView(stopRow);
-        TextView safety = text("Kniply RC-N1 mají vždy přednost. Pilot odpovídá za volnou trasu.", 9, MUTED, false);
+        TextView safety = text("Kniply i kolečko gimbalu RC-N1 mají vždy přednost. Pilot odpovídá za volnou trasu.", 9, MUTED, false);
         safety.setPadding(0, dp(5), 0, 0);
         controls.addView(safety);
 
@@ -533,7 +547,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         pendingKind = PendingKind.MODE;
         gate.request(pendingPlan.approvalText());
         flightPath.setPlan(pendingPlan);
-        pendingText.setText("NÁHLED TRAJEKTORIE\n" + pendingPlan.approvalText());
+        pendingText.setText("NÁHLED TRAJEKTORIE\n" + pendingPlan.approvalText()
+            + "\nKamera AI: predikční centrování gimbalu a automatický zoom.");
         readinessCheck.setVisibility(View.GONE);
         readinessCheck.setChecked(false);
         approvalCard.setVisibility(View.VISIBLE);
@@ -580,8 +595,9 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         if (runtime != null && runtime.isActive()) runtime.abort("Příprava mise – HOLD");
         invalidatePending(null);
         pendingKind = PendingKind.FULL_MISSION;
-        gate.request("AUTONOMNÍ MISE: vzlet, potvrzené sledování Worker 1, čtyři kompozice a návrat domů");
+        gate.request("AUTONOMNÍ MISE: vzlet, potvrzené sledování Worker 1, automatický gimbal a zoom, čtyři kompozice a návrat domů");
         pendingText.setText("AUTONOMNÍ MISE\nVzlet → sledování Worker 1 → čtyři schválené kompozice → RTH.");
+        pendingText.append("\nKamera AI průběžně řídí náklon a digitální zoom.");
         readinessCheck.setVisibility(View.VISIBLE);
         readinessCheck.setChecked(false);
         approvalCard.setVisibility(View.VISIBLE);
@@ -815,6 +831,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     @Override public void onPilotOverride(String reason) {
         ui(() -> {
+            cameraAutomationActive = false;
             missionActive = false;
             main.removeCallbacks(missionPrompt);
             invalidatePending(null);
@@ -830,6 +847,16 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         ui(() -> {
             recordButton.setText(recording ? "■ STOP" : "● REC");
             styleButton(recordButton, recording ? ORANGE : RED);
+        });
+    }
+
+    @Override public void onCameraAutomationState(boolean digitalZoomSupported,
+            float appliedZoomFactor) {
+        if (runtime != null) runtime.updateAppliedZoom(digitalZoomSupported, appliedZoomFactor);
+        ui(() -> {
+            cameraZoomAvailable = digitalZoomSupported;
+            cameraZoomFactor = appliedZoomFactor;
+            renderCameraDirectorUi();
         });
     }
 
@@ -875,6 +902,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     @Override public void onRuntimeState(boolean active, String message, FlightCommand command) {
         ui(() -> {
+            cameraAutomationActive = active;
             if (!active && authority.state() == ControlAuthority.State.AI_ACTIVE) {
                 if (message.startsWith("Kompozice dokončena")) authority.compositionCompleted();
                 else {
@@ -886,9 +914,13 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             }
             statusText.setText(message);
             statusText.setTextColor(active ? GREEN : ORANGE);
+            String zoom = Float.isFinite(command.digitalZoomFactor)
+                ? String.format(Locale.getDefault(), "%.2f×", command.digitalZoomFactor) : "—";
             commandText.setText(String.format(Locale.getDefault(),
-                "PITCH %.2f   ROLL %.2f   YAW %.1f   VERT %.2f   GIMBAL %.1f",
-                command.pitch, command.roll, command.yaw, command.vertical, command.gimbalPitch));
+                "PITCH %.2f   ROLL %.2f   YAW %.1f   VERT %.2f   GIMBAL %.1f   ZOOM %s",
+                command.pitch, command.roll, command.yaw, command.vertical,
+                command.gimbalPitch, zoom));
+            renderCameraDirectorUi();
         });
     }
 
@@ -978,7 +1010,40 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             if (rearmAiButton != null) {
                 rearmAiButton.setVisibility(authority.manualRearmRequired() ? View.VISIBLE : View.GONE);
             }
+            renderCameraDirectorUi();
         });
+    }
+
+    private void renderCameraDirectorUi() {
+        if (cameraDirectorText == null) return;
+        ControlAuthority.State current = authority.state();
+        String label;
+        int color;
+        if (cameraAutomationActive && current == ControlAuthority.State.AI_ACTIVE) {
+            label = cameraZoomAvailable
+                ? String.format(Locale.getDefault(), "KAMERA AI • AUTO GIMBAL • ZOOM %.2f×",
+                    cameraZoomFactor)
+                : "KAMERA AI • AUTO GIMBAL • ZOOM NEDOSTUPNÝ";
+            color = GREEN;
+        } else if (current == ControlAuthority.State.AI_READY) {
+            label = "KAMERA AI • PŘIPRAVENA • GIMBAL + ZOOM";
+            color = CYAN;
+        } else if (current == ControlAuthority.State.PILOT_TAKEOVER) {
+            label = "KAMERA AI • VYPNUTA • OVLÁDÁ PILOT";
+            color = RED;
+        } else if (current == ControlAuthority.State.RTH) {
+            label = "KAMERA AI • VYPNUTA • RTH ŘÍDÍ DJI";
+            color = ORANGE;
+        } else if (current == ControlAuthority.State.AI_ACTIVE) {
+            label = "KAMERA AI • SPOUŠTÍ SE";
+            color = CYAN;
+        } else {
+            label = "KAMERA AI • VYPNUTA";
+            color = MUTED;
+        }
+        cameraDirectorText.setText(label);
+        cameraDirectorText.setTextColor(color);
+        cameraDirectorText.setBackground(card(Color.argb(105, 5, 17, 24), 8, color));
     }
 
     private void ui(Runnable action) {

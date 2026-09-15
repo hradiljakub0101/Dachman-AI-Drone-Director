@@ -14,6 +14,7 @@ public final class FlightDirectorTest {
             FlightPlan plan = new FlightPlan(mode, FlightLevel.WIDE, FlightProfile.STANDARD);
             TrackingSnapshot tracking = tracking();
             FlightDirector director = new FlightDirector();
+            director.updateAppliedZoom(true, CameraDirector.MIN_DIGITAL_ZOOM);
             director.begin(plan, tracking);
             FlightCommand command = director.command(plan, telemetry(10f), tracking);
             assertTrue(Math.abs(command.pitch) <= FlightProfile.STANDARD.maxHorizontalMetersPerSecond);
@@ -21,6 +22,8 @@ public final class FlightDirectorTest {
             assertTrue(Math.abs(command.vertical) <= FlightProfile.STANDARD.maxVerticalMetersPerSecond);
             assertTrue(Math.abs(command.yaw) <= FlightProfile.STANDARD.maxYawDegreesPerSecond);
             assertTrue(Math.abs(command.gimbalPitch) <= 20f);
+            assertTrue(command.digitalZoomFactor >= CameraDirector.MIN_DIGITAL_ZOOM);
+            assertTrue(command.digitalZoomFactor <= CameraDirector.MAX_DIGITAL_ZOOM);
         }
     }
 

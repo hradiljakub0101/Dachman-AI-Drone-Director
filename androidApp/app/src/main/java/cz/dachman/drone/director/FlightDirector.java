@@ -4,10 +4,13 @@ package cz.dachman.drone.director;
 public final class FlightDirector {
     private float referenceTargetHeight = 0.3f;
     private FlightCommand previous = FlightCommand.ZERO;
+    private final CameraDirector cameraDirector = new CameraDirector();
 
     public void begin(FlightPlan plan, TrackingSnapshot tracking) {
         TargetBox target = tracking.targetFor(plan.mode);
-        referenceTargetHeight = target == null ? 0.3f : Math.max(0.08f, target.height());
+        cameraDirector.begin(plan, tracking);
+        float zoom = Math.max(CameraDirector.MIN_DIGITAL_ZOOM, cameraDirector.appliedZoomFactor());
+        referenceTargetHeight = target == null ? 0.3f : Math.max(0.08f, target.height() / zoom);
         previous = FlightCommand.ZERO;
     }
 
@@ -16,12 +19,12 @@ public final class FlightDirector {
         if (target == null) return FlightCommand.ZERO;
 
         FlightProfile profile = plan.profile;
-        float xError = clamp(target.centerX() - 0.5f, -0.5f, 0.5f);
+        CameraDirective camera = cameraDirector.command(plan, tracking);
+        float xError = clamp(camera.horizontalError, -0.5f, 0.5f);
         float yError = clamp(target.centerY() - 0.5f, -0.5f, 0.5f);
-        float sizeError = referenceTargetHeight - target.height();
+        float sizeError = referenceTargetHeight - camera.unzoomedTargetHeight;
         float yaw = clamp(xError * profile.maxYawDegreesPerSecond * 2.2f,
             -profile.maxYawDegreesPerSecond, profile.maxYawDegreesPerSecond);
-        float gimbal = clamp(-yError * 38f, -20f, 20f);
         float distanceCorrection = clamp(sizeError * profile.maxHorizontalMetersPerSecond * 4f,
             -profile.maxHorizontalMetersPerSecond * 0.55f,
             profile.maxHorizontalMetersPerSecond * 0.55f);
@@ -69,18 +72,28 @@ public final class FlightDirector {
 
         if (telemetry.altitudeMeters <= 2f && vertical < 0f) vertical = 0f;
         if (telemetry.altitudeMeters >= plan.level.maximumAltitudeMeters && vertical > 0f) vertical = 0f;
-        FlightCommand requested = new FlightCommand(pitch, roll, yaw, vertical, gimbal);
+        FlightCommand requested = new FlightCommand(pitch, roll, yaw, vertical,
+            camera.gimbalPitch, camera.digitalZoomFactor);
         previous = smooth(previous, requested, 0.22f);
         return previous;
     }
 
-    public void reset() { previous = FlightCommand.ZERO; }
+    public void updateAppliedZoom(boolean supported, float factor) {
+        cameraDirector.updateAppliedZoom(supported, factor);
+    }
+
+    public void reset() {
+        previous = FlightCommand.ZERO;
+        cameraDirector.resetMotion();
+    }
 
     private static FlightCommand smooth(FlightCommand old, FlightCommand requested, float alpha) {
+        float zoom = Float.isFinite(requested.digitalZoomFactor)
+            ? requested.digitalZoomFactor : FlightCommand.NO_DIGITAL_ZOOM;
         return new FlightCommand(
             mix(old.pitch, requested.pitch, alpha), mix(old.roll, requested.roll, alpha),
             mix(old.yaw, requested.yaw, alpha), mix(old.vertical, requested.vertical, alpha),
-            mix(old.gimbalPitch, requested.gimbalPitch, alpha));
+            mix(old.gimbalPitch, requested.gimbalPitch, alpha), zoom);
     }
 
     private static float mix(float a, float b, float alpha) { return a + (b - a) * alpha; }
