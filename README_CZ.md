@@ -1,5 +1,12 @@
 # Dachman AI Drone Director
 
+## Hybridní sledování pracovníků
+
+Verze nula celá devět doplňuje bezpečně podepsaný vstup polohových tagů, ruční vazbu
+tagu na obrazový rámeček Worker 1/2, filtrovanou predikci pohybu a bezpečnostní koridor.
+Obrazové sledování zůstává hlavním zdrojem kompozice; GNSS nebo UWB je pouze pomocná
+vrstva. Technický protokol je v [docs/WORKER_POSITION_PROTOCOL_CZ.md](docs/WORKER_POSITION_PROTOCOL_CZ.md).
+
 ## Android – kompletní supervised-flight aplikace
 
 Android verze `0.8.0` pro DJI Mini 2 obsahuje živý obraz, telemetrii, offline detekci
