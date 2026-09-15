@@ -34,6 +34,7 @@ import dji.common.gimbal.Rotation;
 import dji.common.gimbal.RotationMode;
 import dji.common.product.Model;
 import dji.common.remotecontroller.HardwareState;
+import dji.common.util.CommonCallbacks;
 import dji.sdk.airlink.AirLink;
 import dji.sdk.base.BaseComponent;
 import dji.sdk.base.BaseProduct;
@@ -769,20 +770,27 @@ final class DjiConnection implements DroneSession {
                 failReturnHomePreparation(completion, "Home Point nelze uložit: " + errorText(error));
                 return;
             }
-            current.getHomeLocation((home, homeError) -> {
-                if (homeError != null || home == null) {
-                    failReturnHomePreparation(completion, "Uložený Home Point nelze zpětně načíst: " + errorText(homeError));
-                    return;
+            current.getHomeLocation(new CommonCallbacks.CompletionCallbackWith<LocationCoordinate2D>() {
+                @Override public void onSuccess(LocationCoordinate2D home) {
+                    if (home == null) {
+                        failReturnHomePreparation(completion, "Uložený Home Point nelze zpětně načíst.");
+                        return;
+                    }
+                    double verificationError = ReturnHomeStatus.distanceMeters(requestedLatitude,
+                        requestedLongitude, home.getLatitude(), home.getLongitude());
+                    if (Double.isNaN(verificationError)
+                            || verificationError > ReturnHomeStatus.MAXIMUM_HOME_VERIFICATION_ERROR_METERS) {
+                        failReturnHomePreparation(completion,
+                            "Home Point se liší od polohy dronu o více než deset metrů.");
+                        return;
+                    }
+                    configureReturnHomeHeight(current, home, verificationError, heightMeters, completion);
                 }
-                double verificationError = ReturnHomeStatus.distanceMeters(requestedLatitude,
-                    requestedLongitude, home.getLatitude(), home.getLongitude());
-                if (Double.isNaN(verificationError)
-                        || verificationError > ReturnHomeStatus.MAXIMUM_HOME_VERIFICATION_ERROR_METERS) {
+
+                @Override public void onFailure(DJIError error) {
                     failReturnHomePreparation(completion,
-                        "Home Point se liší od polohy dronu o více než deset metrů.");
-                    return;
+                        "Uložený Home Point nelze zpětně načíst: " + errorText(error));
                 }
-                configureReturnHomeHeight(current, home, verificationError, heightMeters, completion);
             });
         });
     }
@@ -794,12 +802,19 @@ final class DjiConnection implements DroneSession {
                 failReturnHomePreparation(completion, "RTH výšku nelze nastavit: " + errorText(error));
                 return;
             }
-            current.getGoHomeHeightInMeters((storedHeight, heightError) -> {
-                if (heightError != null || storedHeight == null || storedHeight != heightMeters) {
-                    failReturnHomePreparation(completion, "Letový kontrolér nepotvrdil zvolenou RTH výšku.");
-                    return;
+            current.getGoHomeHeightInMeters(new CommonCallbacks.CompletionCallbackWith<Integer>() {
+                @Override public void onSuccess(Integer storedHeight) {
+                    if (storedHeight == null || storedHeight != heightMeters) {
+                        failReturnHomePreparation(completion, "Letový kontrolér nepotvrdil zvolenou RTH výšku.");
+                        return;
+                    }
+                    configureSmartRth(current, home, verificationError, storedHeight, completion);
                 }
-                configureSmartRth(current, home, verificationError, storedHeight, completion);
+
+                @Override public void onFailure(DJIError error) {
+                    failReturnHomePreparation(completion,
+                        "RTH výšku nelze zpětně načíst: " + errorText(error));
+                }
             });
         });
     }
@@ -811,12 +826,19 @@ final class DjiConnection implements DroneSession {
                 failReturnHomePreparation(completion, "Smart RTH nelze zapnout: " + errorText(error));
                 return;
             }
-            current.getSmartReturnToHomeEnabled((enabled, smartError) -> {
-                if (smartError != null || enabled == null || !enabled) {
-                    failReturnHomePreparation(completion, "Letový kontrolér nepotvrdil Smart RTH.");
-                    return;
+            current.getSmartReturnToHomeEnabled(new CommonCallbacks.CompletionCallbackWith<Boolean>() {
+                @Override public void onSuccess(Boolean enabled) {
+                    if (enabled == null || !enabled) {
+                        failReturnHomePreparation(completion, "Letový kontrolér nepotvrdil Smart RTH.");
+                        return;
+                    }
+                    configureConnectionFailsafe(current, home, verificationError, heightMeters, completion);
                 }
-                configureConnectionFailsafe(current, home, verificationError, heightMeters, completion);
+
+                @Override public void onFailure(DJIError error) {
+                    failReturnHomePreparation(completion,
+                        "Smart RTH nelze zpětně ověřit: " + errorText(error));
+                }
             });
         });
     }
@@ -828,18 +850,26 @@ final class DjiConnection implements DroneSession {
                 failReturnHomePreparation(completion, "Failsafe GO_HOME nelze nastavit: " + errorText(error));
                 return;
             }
-            current.getConnectionFailSafeBehavior((behavior, failsafeError) -> {
-                boolean goHome = failsafeError == null && behavior == ConnectionFailSafeBehavior.GO_HOME;
-                returnHomeStatus = ReturnHomeStatus.verified(home.getLatitude(), home.getLongitude(),
-                    System.currentTimeMillis(), verificationError, heightMeters, true, goHome);
-                postReturnHomeStatus();
-                if (returnHomeStatus.ready) {
-                    postCompletion(completion, true,
-                        "Návratový bod, RTH výška, Smart RTH a failsafe GO_HOME jsou ověřené.");
-                } else {
-                    failReturnHomePreparation(completion, "Failsafe GO_HOME nebyl zpětně potvrzen.");
-                }
-            });
+            current.getConnectionFailSafeBehavior(
+                new CommonCallbacks.CompletionCallbackWith<ConnectionFailSafeBehavior>() {
+                    @Override public void onSuccess(ConnectionFailSafeBehavior behavior) {
+                        boolean goHome = behavior == ConnectionFailSafeBehavior.GO_HOME;
+                        returnHomeStatus = ReturnHomeStatus.verified(home.getLatitude(), home.getLongitude(),
+                            System.currentTimeMillis(), verificationError, heightMeters, true, goHome);
+                        postReturnHomeStatus();
+                        if (returnHomeStatus.ready) {
+                            postCompletion(completion, true,
+                                "Návratový bod, RTH výška, Smart RTH a failsafe GO_HOME jsou ověřené.");
+                        } else {
+                            failReturnHomePreparation(completion, "Failsafe GO_HOME nebyl zpětně potvrzen.");
+                        }
+                    }
+
+                    @Override public void onFailure(DJIError error) {
+                        failReturnHomePreparation(completion,
+                            "Failsafe GO_HOME nelze zpětně ověřit: " + errorText(error));
+                    }
+                });
         });
     }
 
