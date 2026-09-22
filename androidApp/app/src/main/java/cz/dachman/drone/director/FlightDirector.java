@@ -14,7 +14,8 @@ public final class FlightDirector {
 
     public void begin(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking,
             SafetyConfiguration safetyConfiguration) {
-        TargetBox target = tracking == null ? null : tracking.targetFor(plan.mode);
+        TargetBox target = plan.mode == FlightMode.SURVEY_MAP || tracking == null
+            ? null : tracking.targetFor(plan.mode);
         cameraDirector.begin(plan, tracking);
         float zoom = Math.max(CameraDirector.MIN_DIGITAL_ZOOM, cameraDirector.appliedZoomFactor());
         referenceTargetHeight = target == null ? 0.3f : Math.max(0.08f, target.height() / zoom);
@@ -33,7 +34,8 @@ public final class FlightDirector {
 
     public FlightCommand command(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking,
             SafetyConfiguration safetyConfiguration) {
-        TargetBox target = tracking == null ? null : tracking.targetFor(plan.mode);
+        TargetBox target = plan.mode == FlightMode.SURVEY_MAP || tracking == null
+            ? null : tracking.targetFor(plan.mode);
         if (target == null) return smoothMapCommand(plan, telemetry, safetyConfiguration);
 
         FlightProfile profile = plan.profile;
