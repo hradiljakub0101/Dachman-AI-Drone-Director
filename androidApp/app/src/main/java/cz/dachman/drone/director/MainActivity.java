@@ -136,6 +136,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private FlightAuditLog auditLog;
     private final List<SiteSafetyPlan.Point> roofBoundary = new ArrayList<>();
     private final List<SiteSafetyPlan.Point> forbiddenZone = new ArrayList<>();
+    private volatile BuildingSpatialModel latestSpatialModel;
     private boolean standoffCalibrated;
     private final BroadcastReceiver workerPositionReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -470,6 +471,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         section(controls, "VŠECHNY REŽIMY LETU");
         GridLayout modeGrid = grid();
         modeGrid.setColumnCount(4);
+        addMode(modeGrid, FlightMode.SURVEY_MAP);
         addMode(modeGrid, FlightMode.STATIC_TRACK);
         addMode(modeGrid, FlightMode.FOLLOW);
         addMode(modeGrid, FlightMode.DUO_FOLLOW);
@@ -735,6 +737,11 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             showStatus("Pro autonomní misi zakresli do satelitní mapy pracovní zónu alespoň třemi body.");
             return;
         }
+        if (latestSpatialModel == null || !latestSpatialModel.ready()) {
+            revealMapDrawer();
+            showStatus("Před autonomní misí dokonči MAPOVACÍ OBLET budovy.");
+            return;
+        }
         authority.targetConfirmed(true);
         updateAuthorityUi();
         if (runtime != null && runtime.isActive()) runtime.abort("Příprava mise – HOLD");
@@ -762,7 +769,15 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     private boolean mapPlanReady(FlightMode mode) {
         int required = mode.requiresMapOrbitCenter() ? 3 : mode.requiresMapRoute() ? 2 : 0;
-        if (roofBoundary.size() >= required) return true;
+        if (roofBoundary.size() >= required) {
+            if (mode != FlightMode.SURVEY_MAP && (mode.requiresMapRoute() || mode.requiresMapOrbitCenter())
+                    && (latestSpatialModel == null || !latestSpatialModel.ready())) {
+                revealMapDrawer();
+                showStatus("Nejprve dokonči MAPOVACÍ OBLET a ověř prostorový model budovy.");
+                return false;
+            }
+            return true;
+        }
         revealMapDrawer();
         showStatus(mode.requiresMapOrbitCenter()
             ? "Pro ORBIT zakresli do satelitní mapy pracovní zónu alespoň třemi body."
@@ -827,6 +842,13 @@ public final class MainActivity extends Activity implements DroneSession.Listene
                     return;
                 }
                 closeHudDrawers();
+                if (plan.mode == FlightMode.SURVEY_MAP) {
+                    main.postDelayed(() -> {
+                        if (runtime != null && runtime.isActive()) {
+                            runtime.hold("Mapovací oblet dokončen – prostorový model uložen");
+                        }
+                    }, 60_000L);
+                }
                 if (!missionActive) return;
                 // Keep each shot bounded; then stop, re-check the target and ask for the next approval.
                 main.postDelayed(() -> {
@@ -1143,6 +1165,19 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             FusionStatus fusion = currentFusionStatus();
             if (auditLog != null) auditLog.append(active ? "AI_COMMAND" : "AI_STATE", message, fusion, command);
             updateFusionUi();
+        });
+    }
+
+    @Override public void onSpatialModelUpdated(BuildingSpatialModel model) {
+        if (model == null) return;
+        latestSpatialModel = model;
+        ui(() -> {
+            String state = model.ready() ? "MODEL PŘIPRAVEN" : "MODEL SE ZPŘESŇUJE";
+            showStatus(state + " • pokrytí " + model.coveredSectors + "/8 • jistota "
+                + model.confidencePercent() + " %");
+            if (auditLog != null) auditLog.append("SPATIAL_MODEL",
+                state + ", pozorování=" + model.observations + ", sektory=" + model.coveredSectors,
+                currentFusionStatus(), FlightCommand.ZERO);
         });
     }
 

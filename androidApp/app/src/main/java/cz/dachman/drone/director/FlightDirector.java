@@ -146,6 +146,9 @@ public final class FlightDirector {
                 float[] orbit = orbitVelocity(telemetry, center, profile,
                     plan.mode == FlightMode.ORBIT_LEFT ? -1f : 1f);
                 pitch = orbit[0]; roll = orbit[1]; yaw = orbit[2];
+                if (plan.mode == FlightMode.SURVEY_MAP) {
+                    pitch *= 0.45f; roll *= 0.45f; yaw *= 0.55f; gimbal = -12f;
+                }
             }
         } else if (plan.mode == FlightMode.PULL_AWAY) {
             pitch = -profile.maxHorizontalMetersPerSecond * 0.70f;

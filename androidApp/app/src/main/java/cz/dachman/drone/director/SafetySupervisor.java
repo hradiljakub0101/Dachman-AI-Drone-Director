@@ -37,6 +37,10 @@ public final class SafetySupervisor {
         // DJI's controller is authoritative for GNSS/Home Point validity. Satellite count
         // remains visible to the pilot, but is not a second, contradictory hard threshold.
         if (!telemetry.hasHomeLocation()) return SafetyDecision.hold("Čekám na Home Point potvrzený letovým kontrolérem DJI.");
+        if ((plan.mode.requiresMapRoute() || plan.mode.requiresMapOrbitCenter())
+                && !telemetry.hasAircraftLocation()) {
+            return SafetyDecision.hold("Ztráta prostorové lokalizace – AI zahajuje řízené zabrzdění.");
+        }
         if (telemetry.signalPercent < 0) return SafetyDecision.hold("Čekám na kvalitu rádiového spojení.");
         if (telemetry.signalPercent < MINIMUM_SIGNAL_PERCENT) return SafetyDecision.stop("Slabé spojení mezi ovladačem a dronem.");
         if ("LEVEL_2".equals(telemetry.windLevel)) return SafetyDecision.stop("Silný vítr – automatický režim zastaven.");

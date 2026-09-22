@@ -8,6 +8,7 @@ import java.util.concurrent.TimeUnit;
 public final class FlightRuntime {
     public interface Listener {
         void onRuntimeState(boolean active, String message, FlightCommand command);
+        default void onSpatialModelUpdated(BuildingSpatialModel model) {}
     }
 
     private final DroneSession session;
@@ -25,6 +26,9 @@ public final class FlightRuntime {
     private volatile long holdSince;
     private volatile long revision;
     private volatile boolean closed;
+    private volatile FlightCommand lastCommand = FlightCommand.ZERO;
+    private volatile BuildingSpatialModel spatialModel;
+    private BuildingSpatialModel.Builder surveyBuilder;
     private String lastMessage = "";
 
     public FlightRuntime(DroneSession session, Listener listener) {
@@ -45,6 +49,7 @@ public final class FlightRuntime {
         director.updateAppliedZoom(supported, factor);
     }
     public boolean isActive() { return active; }
+    public BuildingSpatialModel spatialModel() { return spatialModel; }
 
     public SafetyDecision preflight(FlightPlan candidate) {
         return safety.evaluate(candidate, telemetry, tracking, workerGeo, safetyConfiguration, now(), now());
@@ -60,6 +65,9 @@ public final class FlightRuntime {
         }
         final long challenge = ++revision;
         director.begin(candidate, telemetry, tracking, workerGeo, safetyConfiguration);
+        if (candidate.mode == FlightMode.SURVEY_MAP) {
+            surveyBuilder = new BuildingSpatialModel.Builder(safetyConfiguration.site.roofBoundary);
+        }
         session.enableVirtualStick((success, message) -> {
             if (challenge != revision || closed) {
                 if (success) session.disableVirtualStick("Pozdní spuštění bylo zrušeno.", (ignored, detail) -> {});
@@ -70,6 +78,7 @@ public final class FlightRuntime {
             plan = candidate;
             startedAt = now();
             holdSince = 0L;
+            lastCommand = FlightCommand.ZERO;
             active = true;
             emit("AKTIVNÍ: " + candidate.mode.label, FlightCommand.ZERO);
             completion.onComplete(true, message);
@@ -90,15 +99,26 @@ public final class FlightRuntime {
             return;
         }
         if (decision.action == SafetyDecision.Action.HOLD) {
-            session.sendCommand(FlightCommand.ZERO);
-            emit(decision.reason, FlightCommand.ZERO);
             if (holdSince == 0L) holdSince = now;
+            boolean localizationLost = !telemetry.hasAircraftLocation()
+                && (current.mode.requiresMapRoute() || current.mode.requiresMapOrbitCenter());
+            FlightCommand braking = localizationLost
+                ? brakingCommand(lastCommand, now - holdSince) : FlightCommand.ZERO;
+            session.sendCommand(braking);
+            emit(localizationLost ? "AI BRZDÍ – ztráta prostorové lokalizace" : decision.reason, braking);
             if (now - holdSince > 2_500L) stop(decision.reason);
             return;
         }
         holdSince = 0L;
         FlightCommand command = director.command(current, telemetry, tracking, workerGeo, safetyConfiguration);
+        if (current.mode == FlightMode.SURVEY_MAP && surveyBuilder != null) {
+            surveyBuilder.observe(telemetry);
+            BuildingSpatialModel next = surveyBuilder.snapshot(now);
+            spatialModel = next;
+            if (next.observations % 10 == 0) listener.onSpatialModelUpdated(next);
+        }
         session.sendCommand(command);
+        lastCommand = command;
         emit("AKTIVNÍ: " + current.mode.label, command);
     }
 
@@ -106,9 +126,17 @@ public final class FlightRuntime {
         revision++;
         if (!active && plan == null) return;
         active = false;
+        if (plan == null || plan.mode != FlightMode.SURVEY_MAP || surveyBuilder == null) {
+            surveyBuilder = null;
+        } else {
+            spatialModel = surveyBuilder.snapshot(now());
+            listener.onSpatialModelUpdated(spatialModel);
+            surveyBuilder = null;
+        }
         plan = null;
         holdSince = 0L;
         director.reset();
+        lastCommand = FlightCommand.ZERO;
         session.sendCommand(FlightCommand.ZERO);
         session.disableVirtualStick(reason, (success, message) -> emit(reason, FlightCommand.ZERO));
     }
@@ -128,4 +156,12 @@ public final class FlightRuntime {
     }
 
     private static long now() { return android.os.SystemClock.elapsedRealtime(); }
+
+    static FlightCommand brakingCommand(FlightCommand previous, long elapsedMillis) {
+        if (previous == null || elapsedMillis >= 1_500L) return FlightCommand.ZERO;
+        float factor = Math.max(0f, 1f - elapsedMillis / 1_500f);
+        return new FlightCommand(previous.pitch * factor, previous.roll * factor,
+            previous.yaw * factor, previous.vertical * factor, previous.gimbalPitch,
+            previous.digitalZoomFactor);
+    }
 }

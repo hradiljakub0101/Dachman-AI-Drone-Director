@@ -3,6 +3,7 @@ package cz.dachman.drone.director;
 /** Supervised map-directed manoeuvres; physical stick movement always overrides AI. */
 public enum FlightMode {
     HOLD("HOLD – bez pohybu", false, false, 0),
+    SURVEY_MAP("MAPOVACÍ OBLET", false, false, 90_000),
     STATIC_TRACK("STATICKÝ ZÁBĚR", true, false, 120_000),
     FOLLOW("FOLLOW TRASA", true, false, 60_000),
     DUO_FOLLOW("GROUP MODE", true, true, 60_000),
@@ -30,5 +31,7 @@ public enum FlightMode {
         return this == FOLLOW || this == DUO_FOLLOW || this == ROPE_MODE;
     }
 
-    public boolean requiresMapOrbitCenter() { return this == ORBIT_LEFT || this == ORBIT_RIGHT; }
+    public boolean requiresMapOrbitCenter() {
+        return this == SURVEY_MAP || this == ORBIT_LEFT || this == ORBIT_RIGHT;
+    }
 }
