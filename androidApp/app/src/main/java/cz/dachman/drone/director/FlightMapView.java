@@ -16,6 +16,9 @@ import java.util.ArrayList;
 import java.util.List;
 import org.osmdroid.config.Configuration;
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
+import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase;
+import org.osmdroid.tileprovider.tilesource.XYTileSource;
+import org.osmdroid.util.MapTileIndex;
 import org.osmdroid.util.GeoPoint;
 import org.osmdroid.views.MapView;
 import org.osmdroid.views.overlay.Marker;
@@ -32,6 +35,14 @@ public final class FlightMapView extends FrameLayout {
     }
     private static final int GREEN = Color.rgb(43, 232, 171);
     private static final int ORANGE = Color.rgb(255, 171, 64);
+    private static final OnlineTileSourceBase SATELLITE = new XYTileSource(
+        "EsriWorldImagery", 0, 19, 256, ".jpg",
+        new String[] { "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/" }) {
+        @Override public String getTileURLString(long tileIndex) {
+            return getBaseUrl() + MapTileIndex.getZoom(tileIndex) + "/"
+                + MapTileIndex.getY(tileIndex) + "/" + MapTileIndex.getX(tileIndex) + mImageFilenameEnding;
+        }
+    };
     private final MapView map;
     private final Marker aircraftMarker;
     private final Marker homeMarker;
@@ -60,7 +71,7 @@ public final class FlightMapView extends FrameLayout {
         setClipToOutline(true);
 
         map = new MapView(context);
-        map.setTileSource(TileSourceFactory.MAPNIK);
+        map.setTileSource(SATELLITE);
         map.setMultiTouchControls(false);
         map.setTilesScaledToDpi(true);
         map.getController().setZoom(18.0);
@@ -112,7 +123,7 @@ public final class FlightMapView extends FrameLayout {
         labelParams.setMargins(dp(6), dp(6), 0, 0);
         addView(label, labelParams);
 
-        TextView attribution = hudLabel("© OpenStreetMap", Color.WHITE);
+        TextView attribution = hudLabel("© Esri • satelitní mapa", Color.WHITE);
         FrameLayout.LayoutParams attributionParams = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, dp(20), Gravity.BOTTOM | Gravity.RIGHT);
         attributionParams.setMargins(0, 0, dp(4), dp(3));

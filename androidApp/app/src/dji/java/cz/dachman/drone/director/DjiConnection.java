@@ -747,10 +747,6 @@ final class DjiConnection implements DroneSession {
             postCompletion(completion, false, "Návratový bod lze uložit pouze před spuštěním motorů.");
             return;
         }
-        if (state.getSatelliteCount() < SafetySupervisor.MINIMUM_SATELLITES) {
-            postCompletion(completion, false, "Pro uložení bodu je potřeba alespoň osm satelitů.");
-            return;
-        }
         LocationCoordinate3D aircraftLocation = state.getAircraftLocation();
         if (aircraftLocation == null || Double.isNaN(aircraftLocation.getLatitude())
                 || Double.isNaN(aircraftLocation.getLongitude())) {
@@ -955,7 +951,6 @@ final class DjiConnection implements DroneSession {
         if (state == null) return "Čekám na živou telemetrii letového kontroléru.";
         if (state.areMotorsOn() || state.isFlying()) return "Dron už má spuštěné motory nebo letí.";
         if (batteryPercent < SafetySupervisor.MINIMUM_BATTERY_PERCENT) return "Pro vzlet je potřeba alespoň dvacet pět procent baterie.";
-        if (state.getSatelliteCount() < SafetySupervisor.MINIMUM_SATELLITES) return "Pro vzlet je potřeba alespoň osm satelitů.";
         if (signalPercent < SafetySupervisor.MINIMUM_SIGNAL_PERCENT) return "Rádiové spojení je pro vzlet příliš slabé.";
         if (!state.isHomeLocationSet()) return "Domovský bod zatím není uložen.";
         if (!returnHomeStatus.ready) return "Vzlet je zablokovaný: v aplikaci ulož a ověř návratový bod.";
@@ -972,7 +967,6 @@ final class DjiConnection implements DroneSession {
         if (!state.areMotorsOn() || !state.isFlying()) return "Dron právě neletí.";
         if (returnHome && !state.isHomeLocationSet()) return "Návrat domů nelze spustit bez uloženého domovského bodu.";
         if (returnHome && !returnHomeStatus.ready) return "Návrat domů je zablokovaný: Home Point nebyl aplikací ověřen.";
-        if (returnHome && state.getSatelliteCount() < SafetySupervisor.MINIMUM_SATELLITES) return "Návrat domů vyžaduje spolehlivou GNSS polohu.";
         return null;
     }
 

@@ -6,6 +6,8 @@ public final class FlightDirector {
     private FlightCommand previous = FlightCommand.ZERO;
     private final CameraDirector cameraDirector = new CameraDirector();
     private final HybridFollowController hybridFollow = new HybridFollowController();
+    private int routeIndex;
+    private double orbitRadiusMeters = 8d;
 
     public void begin(FlightPlan plan, TrackingSnapshot tracking) {
         begin(plan, TelemetrySnapshot.disconnected(), tracking, WorkerGeoSnapshot.empty());
@@ -13,12 +15,23 @@ public final class FlightDirector {
 
     public void begin(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking,
             WorkerGeoSnapshot geo) {
-        TargetBox target = tracking.targetFor(plan.mode);
+        begin(plan, telemetry, tracking, geo, SafetyConfiguration.defaults());
+    }
+
+    public void begin(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking,
+            WorkerGeoSnapshot geo, SafetyConfiguration safetyConfiguration) {
+        TargetBox target = plan.mode.requiresPrimary ? tracking.targetFor(plan.mode) : null;
         cameraDirector.begin(plan, tracking);
         hybridFollow.begin(telemetry, geo == null ? null : geo.targetFor(plan.mode));
         float zoom = Math.max(CameraDirector.MIN_DIGITAL_ZOOM, cameraDirector.appliedZoomFactor());
         referenceTargetHeight = target == null ? 0.3f : Math.max(0.08f, target.height() / zoom);
         previous = FlightCommand.ZERO;
+        routeIndex = 0;
+        SiteSafetyPlan site = safetyConfiguration == null ? SiteSafetyPlan.empty() : safetyConfiguration.site;
+        SiteSafetyPlan.Point center = centroid(site.roofBoundary);
+        if (center != null && telemetry.hasAircraftLocation()) orbitRadiusMeters = Math.max(5d,
+            HybridFollowController.distanceMeters(telemetry.aircraftLatitude, telemetry.aircraftLongitude,
+                center.latitude, center.longitude));
     }
 
     public FlightCommand command(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking) {
@@ -27,8 +40,13 @@ public final class FlightDirector {
 
     public FlightCommand command(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking,
             WorkerGeoSnapshot geo) {
-        TargetBox target = tracking.targetFor(plan.mode);
-        if (target == null) return FlightCommand.ZERO;
+        return command(plan, telemetry, tracking, geo, SafetyConfiguration.defaults());
+    }
+
+    public FlightCommand command(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking,
+            WorkerGeoSnapshot geo, SafetyConfiguration safetyConfiguration) {
+        TargetBox target = plan.mode.requiresPrimary ? tracking.targetFor(plan.mode) : null;
+        if (target == null) return smoothMapCommand(plan, telemetry, safetyConfiguration);
 
         FlightProfile profile = plan.profile;
         CameraDirective camera = cameraDirector.command(plan, tracking);
@@ -101,6 +119,93 @@ public final class FlightDirector {
         previous = FlightCommand.ZERO;
         cameraDirector.resetMotion();
         hybridFollow.reset();
+        routeIndex = 0;
+    }
+
+    private FlightCommand smoothMapCommand(FlightPlan plan, TelemetrySnapshot telemetry,
+            SafetyConfiguration configuration) {
+        FlightProfile profile = plan.profile;
+        SiteSafetyPlan site = configuration == null ? SiteSafetyPlan.empty() : configuration.site;
+        float pitch = 0f, roll = 0f, yaw = 0f, vertical = 0f, gimbal = 0f;
+        if (plan.mode.requiresMapRoute() && telemetry.hasAircraftLocation() && site.roofBoundary.size() >= 2) {
+            SiteSafetyPlan.Point waypoint = site.roofBoundary.get(routeIndex % site.roofBoundary.size());
+            double distance = HybridFollowController.distanceMeters(telemetry.aircraftLatitude,
+                telemetry.aircraftLongitude, waypoint.latitude, waypoint.longitude);
+            if (distance < 2.5d) {
+                routeIndex = (routeIndex + 1) % site.roofBoundary.size();
+                waypoint = site.roofBoundary.get(routeIndex);
+            }
+            float scale = plan.mode == FlightMode.ROPE_MODE ? 0.35f
+                : plan.mode == FlightMode.DUO_FOLLOW ? 0.50f : 0.65f;
+            float[] body = bodyVelocityTo(telemetry, waypoint, profile.maxHorizontalMetersPerSecond * scale);
+            pitch = body[0]; roll = body[1]; yaw = body[2];
+            gimbal = plan.mode == FlightMode.ROPE_MODE ? -8f : 0f;
+        } else if (plan.mode.requiresMapOrbitCenter() && telemetry.hasAircraftLocation()) {
+            SiteSafetyPlan.Point center = centroid(site.roofBoundary);
+            if (center != null) {
+                float[] orbit = orbitVelocity(telemetry, center, profile,
+                    plan.mode == FlightMode.ORBIT_LEFT ? -1f : 1f);
+                pitch = orbit[0]; roll = orbit[1]; yaw = orbit[2];
+            }
+        } else if (plan.mode == FlightMode.PULL_AWAY) {
+            pitch = -profile.maxHorizontalMetersPerSecond * 0.70f;
+            vertical = profile.maxVerticalMetersPerSecond * 0.18f;
+        } else if (plan.mode == FlightMode.REVEAL_UP) {
+            pitch = -profile.maxHorizontalMetersPerSecond * 0.35f;
+            vertical = profile.maxVerticalMetersPerSecond * 0.65f;
+            gimbal = -6f;
+        } else if (plan.mode == FlightMode.HOLD || plan.mode == FlightMode.STATIC_TRACK) {
+            return FlightCommand.ZERO;
+        }
+        if (telemetry.altitudeMeters >= plan.level.maximumAltitudeMeters && vertical > 0f) vertical = 0f;
+        previous = smooth(previous, new FlightCommand(pitch, roll, yaw, vertical, gimbal,
+            FlightCommand.NO_DIGITAL_ZOOM), 0.22f);
+        return previous;
+    }
+
+    private static float[] bodyVelocityTo(TelemetrySnapshot telemetry, SiteSafetyPlan.Point point, float speed) {
+        double north = Math.toRadians(point.latitude - telemetry.aircraftLatitude) * 6_371_000d;
+        double east = Math.toRadians(point.longitude - telemetry.aircraftLongitude) * 6_371_000d
+            * Math.cos(Math.toRadians(telemetry.aircraftLatitude));
+        double length = Math.max(0.1d, Math.hypot(north, east));
+        double heading = Math.toRadians(telemetry.headingDegrees);
+        float forward = (float)((north * Math.cos(heading) + east * Math.sin(heading)) / length * speed);
+        float right = (float)((-north * Math.sin(heading) + east * Math.cos(heading)) / length * speed);
+        float desiredHeading = (float)Math.toDegrees(Math.atan2(east, north));
+        float yawError = normalize180(desiredHeading - telemetry.headingDegrees);
+        return new float[]{forward, right, clamp(yawError * 0.35f, -12f, 12f)};
+    }
+
+    private float[] orbitVelocity(TelemetrySnapshot telemetry, SiteSafetyPlan.Point center,
+            FlightProfile profile, float direction) {
+        double north = Math.toRadians(telemetry.aircraftLatitude - center.latitude) * 6_371_000d;
+        double east = Math.toRadians(telemetry.aircraftLongitude - center.longitude) * 6_371_000d
+            * Math.cos(Math.toRadians(center.latitude));
+        double radius = Math.max(0.5d, Math.hypot(north, east));
+        double tangentNorth = -east / radius * direction;
+        double tangentEast = north / radius * direction;
+        double radialCorrection = clamp((float)((orbitRadiusMeters - radius) * 0.18d),
+            -profile.maxHorizontalMetersPerSecond * 0.35f, profile.maxHorizontalMetersPerSecond * 0.35f);
+        double velocityNorth = tangentNorth * profile.maxHorizontalMetersPerSecond * 0.55d + north / radius * radialCorrection;
+        double velocityEast = tangentEast * profile.maxHorizontalMetersPerSecond * 0.55d + east / radius * radialCorrection;
+        double heading = Math.toRadians(telemetry.headingDegrees);
+        float forward = (float)(velocityNorth * Math.cos(heading) + velocityEast * Math.sin(heading));
+        float right = (float)(-velocityNorth * Math.sin(heading) + velocityEast * Math.cos(heading));
+        float faceCenter = (float)Math.toDegrees(Math.atan2(-east, -north));
+        return new float[]{forward, right, clamp(normalize180(faceCenter - telemetry.headingDegrees) * 0.4f,
+            -profile.maxYawDegreesPerSecond, profile.maxYawDegreesPerSecond)};
+    }
+
+    private static SiteSafetyPlan.Point centroid(java.util.List<SiteSafetyPlan.Point> points) {
+        if (points == null || points.isEmpty()) return null;
+        double latitude = 0d, longitude = 0d;
+        for (SiteSafetyPlan.Point point : points) { latitude += point.latitude; longitude += point.longitude; }
+        return new SiteSafetyPlan.Point(latitude / points.size(), longitude / points.size());
+    }
+
+    private static float normalize180(float value) {
+        float normalized = (value + 180f) % 360f; if (normalized < 0f) normalized += 360f;
+        return normalized - 180f;
     }
 
     private static FlightCommand smooth(FlightCommand old, FlightCommand requested, float alpha) {

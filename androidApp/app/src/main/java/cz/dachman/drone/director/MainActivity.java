@@ -160,15 +160,13 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         FlightMode.FOLLOW, FlightMode.ORBIT_RIGHT, FlightMode.PULL_AWAY, FlightMode.REVEAL_UP
     };
     private final Runnable missionPrompt = () -> {
-        if (!missionActive || tracker == null) return;
-        if (!tracker.snapshot().hasRequiredTargets(missionModes[missionIndex])) {
-            missionActive = false;
-            showStatus("Mise zastavena – Worker už není bezpečně potvrzen v obrazu.");
-            return;
-        }
-        showStatus("AI navrhuje kompozici " + (missionIndex + 1) + " z " + missionModes.length + ": "
-            + missionModes[missionIndex].label + ". Zkontroluj náhled a potvrď.");
-        requestMode(missionModes[missionIndex]);
+        if (!missionActive) return;
+        FlightMode mode = missionModes[missionIndex];
+        FlightPlan plan = new FlightPlan(mode, FlightLevel.ofMeters(heightSeek.getProgress()),
+            (FlightProfile) profileSpinner.getSelectedItem());
+        showStatus("AI spouští kompozici " + (missionIndex + 1) + " z " + missionModes.length
+            + ": " + mode.label + ". Pilot může kdykoli převzít řízení.");
+        executeApproved(PendingKind.MODE, plan);
     };
 
     private final Runnable frameSampler = new Runnable() {
@@ -397,7 +395,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         statePanel.addView(aircraftActionText);
         controls.addView(statePanel);
 
-        section(controls, "CÍL AI");
+        section(controls, "VOLITELNÉ OZNAČENÍ OSOB – NEŘÍDÍ LET");
         aiText = text("AI MODEL SE NAČÍTÁ…", 10, MUTED, true);
         targetText = text("Worker 1: —   Worker 2: —", 10, Color.WHITE, false);
         controls.addView(aiText);
@@ -412,12 +410,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             tracker.clearSelections();
             workerPositions.clear();
             publishWorkerPositions();
-            missionActive = false;
-            main.removeCallbacks(missionPrompt);
-            if (runtime != null) runtime.hold("Cíl zrušen – HOLD");
-            authority.stopToManual();
-            updateAuthorityUi();
-            invalidatePending("Výběr cílů zrušen – HOLD");
+            invalidatePending("Volitelné označení osob zrušeno; zvolený mapový let pokračuje.");
         });
         controls.addView(clearWorkers, fullButtonParams());
         selectWorkerSlot(1);
@@ -440,7 +433,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             publishWorkerPositions();
             showStatus("Polohové tagy odpojeny; zůstává pouze obrazové sledování.");
         }), fullButtonParams());
-        controls.addView(text("Po spárování jsou aktuální a přesná data tagu povinná; jinak AI přejde do HOLD.",
+        controls.addView(text("Tagy slouží jen jako informační vrstva; jejich ztráta nezastaví mapově řízený let.",
             8, MUTED, false));
 
         section(controls, "KALIBRACE ODSTUPU A PROSTOR STŘECHY");
@@ -617,6 +610,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
         setContentView(root);
         updateAuthorityUi();
+        hudPanels.openMap();
         root.post(() -> applyHudPanelState(false));
     }
 
@@ -686,18 +680,11 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     }
 
     private void requestMode(FlightMode mode) {
-        if (tracker == null) return;
-        TrackingSnapshot snapshot = tracker.snapshot();
         if (authority.manualRearmRequired()) {
             showStatus("Pilot převzal řízení. Nejdřív stiskni RUČNĚ PŘIPRAVIT AI ZNOVU.");
             return;
         }
-        if (!snapshot.hasRequiredTargets(mode)) {
-            showStatus(mode.requiresSecondary
-                ? "Nejprve označ Worker 1 i Worker 2 v živém obrazu."
-                : "Nejprve označ Worker 1 v živém obrazu.");
-            return;
-        }
+        if (!mapPlanReady(mode)) return;
         authority.targetConfirmed(true);
         updateAuthorityUi();
         if (runtime.isActive()) runtime.hold("Změna manévru – HOLD");
@@ -711,10 +698,9 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             + "\nKamera AI: predikční centrování gimbalu a automatický zoom.");
         readinessCheck.setVisibility(View.GONE);
         readinessCheck.setChecked(false);
-        approvalCard.setVisibility(View.VISIBLE);
-        updateApprovalButton();
-        revealControlDrawer();
-        showStatus("Zkontroluj animovaný náhled a potvrď manévr.");
+        approvalCard.setVisibility(View.GONE);
+        showStatus("Ověř vybraný režim jedním systémovým potvrzením.");
+        authenticate();
     }
 
     private void requestAircraftAction(PendingKind kind) {
@@ -731,14 +717,12 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         }
         gate.request(description.replace('\n', ' '));
         pendingText.setText(description);
-        readinessCheck.setVisibility(View.VISIBLE);
-        readinessCheck.setChecked(false);
-        approvalCard.setVisibility(View.VISIBLE);
+        readinessCheck.setVisibility(View.GONE);
+        approvalCard.setVisibility(View.GONE);
         flightPath.setPlan(new FlightPlan(FlightMode.HOLD,
             FlightLevel.ofMeters(heightSeek.getProgress()), (FlightProfile)profileSpinner.getSelectedItem()));
-        updateApprovalButton();
-        revealControlDrawer();
-        showStatus("Před ověřením zkontroluj prostor, domovský bod a stav dronu.");
+        showStatus("Zkontroluj prostor a potvrď akci jedním systémovým ověřením.");
+        authenticate();
     }
 
     private void requestFullMission() {
@@ -746,8 +730,9 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             showStatus("Pilot převzal řízení. Nejdřív stiskni RUČNĚ PŘIPRAVIT AI ZNOVU.");
             return;
         }
-        if (tracker == null || !tracker.snapshot().hasRequiredTargets(FlightMode.FOLLOW)) {
-            showStatus("Nejprve označ a potvrď Worker 1 v živém obrazu.");
+        if (roofBoundary.size() < 3) {
+            revealMapDrawer();
+            showStatus("Pro autonomní misi zakresli do satelitní mapy pracovní zónu alespoň třemi body.");
             return;
         }
         authority.targetConfirmed(true);
@@ -755,28 +740,34 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         if (runtime != null && runtime.isActive()) runtime.abort("Příprava mise – HOLD");
         invalidatePending(null);
         pendingKind = PendingKind.FULL_MISSION;
-        gate.request("AUTONOMNÍ MISE: vzlet, potvrzené sledování Worker 1, automatický gimbal a zoom, čtyři kompozice a návrat domů");
-        pendingText.setText("AUTONOMNÍ MISE\nVzlet → sledování Worker 1 → čtyři schválené kompozice → RTH.");
+        gate.request("AUTONOMNÍ MISE: vzlet, čtyři mapově řízené kompozice a návrat domů");
+        pendingText.setText("AUTONOMNÍ MISE\nVzlet → čtyři mapově řízené kompozice → RTH.");
         pendingText.append("\nKamera AI průběžně řídí náklon a digitální zoom.");
-        readinessCheck.setVisibility(View.VISIBLE);
-        readinessCheck.setChecked(false);
-        approvalCard.setVisibility(View.VISIBLE);
+        readinessCheck.setVisibility(View.GONE);
+        approvalCard.setVisibility(View.GONE);
         flightPath.setPlan(new FlightPlan(FlightMode.FOLLOW,
             FlightLevel.ofMeters(heightSeek.getProgress()), (FlightProfile)profileSpinner.getSelectedItem()));
-        updateApprovalButton();
-        revealControlDrawer();
-        showStatus("Před startem potvrď volný prostor, baterii, GPS a přímý dohled.");
+        showStatus("Zkontroluj prostor, Home Point a přímý dohled; potom proveď jedno ověření.");
+        authenticate();
     }
 
     private void confirmAiRearm() {
-        boolean targetAvailable = tracker != null
-            && tracker.snapshot().hasRequiredTargets(FlightMode.FOLLOW);
-        if (!authority.confirmManualRearm(targetAvailable)) {
-            showStatus("AI nelze připravit. Znovu označ Worker 1 a ověř živý obraz.");
+        if (!authority.confirmManualRearm(true)) {
+            showStatus("AI nelze připravit. Ověř připojení dronu a bezpečnostní stav.");
             return;
         }
         updateAuthorityUi();
         showStatus("AI je znovu připravena. Každý další manévr musíš ručně potvrdit.");
+    }
+
+    private boolean mapPlanReady(FlightMode mode) {
+        int required = mode.requiresMapOrbitCenter() ? 3 : mode.requiresMapRoute() ? 2 : 0;
+        if (roofBoundary.size() >= required) return true;
+        revealMapDrawer();
+        showStatus(mode.requiresMapOrbitCenter()
+            ? "Pro ORBIT zakresli do satelitní mapy pracovní zónu alespoň třemi body."
+            : "Pro tento režim zakresli do satelitní mapy alespoň dva body trasy.");
+        return false;
     }
 
     private void authenticate() {
@@ -848,8 +839,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
                         main.postDelayed(missionPrompt, 900L);
                     } else {
                         missionActive = false;
-                        showStatus("Kompozice dokončeny. Zkontroluj trasu a potvrď bezpečný návrat domů.");
-                        requestAircraftAction(PendingKind.RETURN_HOME);
+                        showStatus("Kompozice dokončeny. Spouštím předem schválený bezpečný návrat domů.");
+                        executeApproved(PendingKind.RETURN_HOME, null);
                     }
                 }, 8_000L);
             });

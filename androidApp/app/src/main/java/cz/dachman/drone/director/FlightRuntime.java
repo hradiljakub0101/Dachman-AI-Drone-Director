@@ -59,7 +59,7 @@ public final class FlightRuntime {
             return;
         }
         final long challenge = ++revision;
-        director.begin(candidate, telemetry, tracking, workerGeo);
+        director.begin(candidate, telemetry, tracking, workerGeo, safetyConfiguration);
         session.enableVirtualStick((success, message) -> {
             if (challenge != revision || closed) {
                 if (success) session.disableVirtualStick("Pozdní spuštění bylo zrušeno.", (ignored, detail) -> {});
@@ -97,7 +97,7 @@ public final class FlightRuntime {
             return;
         }
         holdSince = 0L;
-        FlightCommand command = director.command(current, telemetry, tracking, workerGeo);
+        FlightCommand command = director.command(current, telemetry, tracking, workerGeo, safetyConfiguration);
         session.sendCommand(command);
         emit("AKTIVNÍ: " + current.mode.label, command);
     }
