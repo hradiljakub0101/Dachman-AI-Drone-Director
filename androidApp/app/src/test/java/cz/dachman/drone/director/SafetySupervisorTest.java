@@ -45,6 +45,24 @@ public final class SafetySupervisorTest {
             tracking(NOW, true), configuration(), NOW, NOW).action);
     }
 
+    @Test public void explicitPilotChoiceAllowsOrbitWithoutHomeAndAircraftGps() {
+        TelemetrySnapshot noNavigation = new TelemetrySnapshot(true, true, "DJI Mini 2", "ATTI",
+            80, 0, 10f, 0.2f, 0f, 90, true, true, false, false, "LEVEL_0",
+            Double.NaN, Double.NaN, Double.NaN, Double.NaN, 0f, false);
+        SafetyConfiguration accepted = new SafetyConfiguration(6d, true,
+            SiteSafetyPlan.empty(), true);
+        assertEquals(SafetyDecision.Action.ALLOW, safety.evaluate(plan(FlightMode.ORBIT_LEFT),
+            noNavigation, tracking(NOW, true), accepted, NOW, NOW).action);
+    }
+
+    @Test public void missingNavigationRequiresExplicitPilotChoice() {
+        TelemetrySnapshot noNavigation = new TelemetrySnapshot(true, true, "DJI Mini 2", "ATTI",
+            80, 0, 10f, 0.2f, 0f, 90, true, true, false, false, "LEVEL_0",
+            Double.NaN, Double.NaN, Double.NaN, Double.NaN, 0f, false);
+        assertEquals(SafetyDecision.Action.HOLD, safety.evaluate(plan(FlightMode.ORBIT_LEFT),
+            noNavigation, tracking(NOW, true), configuration(), NOW, NOW).action);
+    }
+
     private static FlightPlan plan(FlightMode mode) {
         return new FlightPlan(mode, FlightLevel.ofMeters(30), FlightProfile.STANDARD);
     }

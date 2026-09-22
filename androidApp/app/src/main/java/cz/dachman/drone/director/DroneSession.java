@@ -23,6 +23,7 @@ public interface DroneSession {
     void attachVideo(SurfaceTexture texture, int width, int height);
     void detachVideo();
     boolean supportsLiveControl();
+    default void setFlightWithoutHomeAccepted(boolean accepted) {}
     void enableVirtualStick(Completion completion);
     default void sendCommand(FlightCommand command) { sendCommand(command, (success, message) -> {}); }
     void sendCommand(FlightCommand command, Completion completion);

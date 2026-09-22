@@ -30,8 +30,10 @@ def main() -> int:
         "Smart RTH request is not confirmed": "confirmSmartReturnToHomeRequest(true" in dji,
         "Low battery RTH one-shot latch is missing":
             "lowBatteryRthTriggered" in dji and "AUTOMATIC_RTH_BATTERY_PERCENT" in dji,
-        "Take-off does not require the verified return configuration":
-            "if (!returnHomeStatus.ready)" in dji,
+        "Take-off has neither verified Home nor explicit unavailable choice":
+            "flightWithoutHomeAccepted" in dji and "if (!returnHomeStatus.ready)" in dji,
+        "RTH can be bypassed without a real Home Point":
+            "validateAirborneAction(true)" in dji and "Home Point nebyl aplikací ověřen" in dji,
         "Home Point verification tolerance is missing":
             "MAXIMUM_HOME_VERIFICATION_ERROR_METERS" in status,
     }

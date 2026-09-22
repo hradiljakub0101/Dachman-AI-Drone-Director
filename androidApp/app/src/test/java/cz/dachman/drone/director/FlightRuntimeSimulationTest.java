@@ -118,6 +118,33 @@ public final class FlightRuntimeSimulationTest {
         }
     }
 
+    @Test public void explicitHomeUnavailableModeAllowsEveryAutonomousMovementWithoutHomeOrGps() {
+        for (FlightMode mode : FlightMode.values()) {
+            if (mode == FlightMode.HOLD) continue;
+            try (Rig r = new Rig()) {
+                r.selection = mode.requiresSecondary ? TargetSelection.BOTH : TargetSelection.WORKER_ONE;
+                r.home = false;
+                r.location = false;
+                r.runtime.updateSafetyConfiguration(new SafetyConfiguration(6d, true,
+                    SiteSafetyPlan.empty(), true));
+                r.start(mode, mode.requiresSecondary ? TargetSelection.BOTH : TargetSelection.WORKER_ONE);
+                assertTrue(mode + ": " + r.lastMessage, r.runtime.isActive());
+                r.step();
+                assertFalse(r.session.packets.isEmpty());
+            }
+        }
+    }
+
+    @Test public void missingHomeStillBlocksMovementUntilPilotSelectsUnavailableMode() {
+        try (Rig r = new Rig()) {
+            r.home = false;
+            r.location = false;
+            r.start(FlightMode.ORBIT_LEFT, TargetSelection.WORKER_ONE);
+            assertFalse(r.runtime.isActive());
+            assertEquals(0, r.session.enableCalls);
+        }
+    }
+
     @Test public void lossOfLocalisationStopsWithoutInventingPhonePosition() {
         try (Rig r = new Rig()) {
             r.start(FlightMode.FOLLOW, TargetSelection.WORKER_ONE);

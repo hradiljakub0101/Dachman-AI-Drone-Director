@@ -92,6 +92,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private TextView rthHeightText;
     private LinearLayout approvalCard;
     private CheckBox readinessCheck;
+    private CheckBox homeUnavailableCheck;
     private Button approveButton;
     private Button workerOneButton;
     private Button workerTwoButton;
@@ -479,7 +480,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         controls.addView(heightSeek);
         controls.addView(text("Strop řízení, nikoli příkaz vystoupat.", 9, MUTED, false));
 
-        section(controls, "NÁVRATOVÝ BOD – POVINNÉ PŘED VZLETEM");
+        section(controls, "NÁVRATOVÝ BOD / LET BEZ HOME");
         LinearLayout homeCard = column();
         homeCard.setPadding(dp(8), dp(7), dp(8), dp(7));
         homeCard.setBackground(card(Color.argb(145, 17, 48, 61), 9, ORANGE));
@@ -513,6 +514,21 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         homeCard.addView(saveHomeFromPhone, fullButtonParams());
         homeCard.addView(text("Záložní volba: telefon polož vedle dronu. DJI přijme bod jen při přesnosti do patnácti metrů.",
             8, MUTED, false));
+        homeUnavailableCheck = new CheckBox(this);
+        homeUnavailableCheck.setTextColor(Color.WHITE);
+        homeUnavailableCheck.setButtonTintList(ColorStateList.valueOf(ORANGE));
+        homeUnavailableCheck.setText("HOME POINT NEDOSTUPNÝ – POVOLIT AUTONOMNÍ VZLET A POHYB");
+        homeUnavailableCheck.setOnCheckedChangeListener((button, checked) -> {
+            publishSafetyConfiguration();
+            renderReturnHomeStatus();
+            updateApprovalButton();
+            showStatus(checked
+                ? "Let bez Home povolen: vzlet a pohybové režimy jsou dostupné; RTH nebude dostupné."
+                : "Let bez Home vypnut: autonomní vzlet a pohyb znovu vyžadují DJI Home Point.");
+        });
+        homeCard.addView(homeUnavailableCheck);
+        homeCard.addView(text("Platí pro FOLLOW, GROUP, ORBIT, mapovací oblet, odjezd, stoupání a ROPE. Mise bez Home skončí ve visu.",
+            8, ORANGE, true));
         controls.addView(homeCard);
 
         approvalCard = column();
@@ -820,8 +836,15 @@ public final class MainActivity extends Activity implements DroneSession.Listene
                         main.postDelayed(missionPrompt, 900L);
                     } else {
                         missionActive = false;
-                        showStatus("Kompozice dokončeny. Spouštím předem schválený bezpečný návrat domů.");
-                        executeApproved(PendingKind.RETURN_HOME, null);
+                        if (homeConfigurationReady()) {
+                            showStatus("Kompozice dokončeny. Spouštím předem schválený návrat domů.");
+                            executeApproved(PendingKind.RETURN_HOME, null);
+                        } else {
+                            runtime.hold("Mise bez Home dokončena – vis a řízení pilota");
+                            authority.stopToManual();
+                            updateAuthorityUi();
+                            showStatus("Kompozice dokončeny bez Home. Dron zůstává ve visu; převezmi řízení nebo přistaň zde.");
+                        }
                     }
                 }, 8_000L);
             });
@@ -925,11 +948,13 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         boolean needsChecklist = pendingKind == PendingKind.TAKEOFF
             || pendingKind == PendingKind.EMERGENCY_LANDING || pendingKind == PendingKind.RETURN_HOME
             || pendingKind == PendingKind.FULL_MISSION;
-        boolean needsVerifiedHome = pendingKind == PendingKind.TAKEOFF
-            || pendingKind == PendingKind.FULL_MISSION || pendingKind == PendingKind.RETURN_HOME;
+        boolean needsVerifiedHome = pendingKind == PendingKind.RETURN_HOME;
+        boolean needsHomeOrBypass = pendingKind == PendingKind.TAKEOFF
+            || pendingKind == PendingKind.FULL_MISSION;
         approveButton.setEnabled(authentication == null && pendingKind != PendingKind.NONE
             && (!needsChecklist || readinessCheck.isChecked())
-            && (!needsVerifiedHome || homeConfigurationReady()));
+            && (!needsVerifiedHome || homeConfigurationReady())
+            && (!needsHomeOrBypass || homeConfigurationReady() || flightWithoutHomeAccepted()));
         approveButton.setText(authentication == null ? "OVĚŘIT A SPUSTIT" : "OVĚŘOVÁNÍ…");
     }
 
@@ -1012,6 +1037,10 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             && returnHomeStatus.rthHeightMeters == rthHeightSeek.getProgress();
     }
 
+    private boolean flightWithoutHomeAccepted() {
+        return homeUnavailableCheck != null && homeUnavailableCheck.isChecked();
+    }
+
     private void renderReturnHomeStatus() {
         if (returnHomeText == null) return;
         if (returnHomeStatus.configuring) {
@@ -1020,8 +1049,13 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             return;
         }
         if (!returnHomeStatus.ready) {
-            returnHomeText.setText("HOME — • " + returnHomeStatus.detail);
-            returnHomeText.setTextColor(RED);
+            if (flightWithoutHomeAccepted()) {
+                returnHomeText.setText("HOME VYNECHÁN • AUTONOMNÍ VZLET A POHYB POVOLEN • RTH NEDOSTUPNÉ");
+                returnHomeText.setTextColor(ORANGE);
+            } else {
+                returnHomeText.setText("HOME — • " + returnHomeStatus.detail);
+                returnHomeText.setTextColor(RED);
+            }
             return;
         }
         String saved = DateFormat.getTimeInstance(DateFormat.SHORT).format(
@@ -1272,8 +1306,9 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             reference == null ? Double.NaN : reference.longitude,
             roofHeightSeek.getProgress(), roofSlopeSeek.getProgress(), roofBearingSeek.getProgress());
         SafetyConfiguration configuration = new SafetyConfiguration(standoffSeek.getProgress(),
-            standoffCalibrated, plan);
+            standoffCalibrated, plan, flightWithoutHomeAccepted());
         if (runtime != null) runtime.updateSafetyConfiguration(configuration);
+        if (dji != null) dji.setFlightWithoutHomeAccepted(flightWithoutHomeAccepted());
         if (safetyCalibrationText != null) safetyCalibrationText.setText(
             "ODSTUP " + standoffSeek.getProgress() + " m • STŘECHA " + roofBoundary.size()
                 + " BODŮ • ZÁKAZ " + forbiddenZone.size() + " BODŮ");

@@ -30,10 +30,15 @@ public final class SafetySupervisor {
         if (telemetry.goingHome) return SafetyDecision.stop("Probíhá návrat domů – aplikace uvolnila řízení.");
         if (telemetry.batteryPercent < 0) return SafetyDecision.hold("Čekám na stav baterie.");
         if (telemetry.batteryPercent < MINIMUM_BATTERY_PERCENT) return SafetyDecision.stop("Baterie je pod bezpečnostním limitem.");
-        // DJI's controller is authoritative for GNSS/Home Point validity. Satellite count
-        // remains visible to the pilot, but is not a second, contradictory hard threshold.
-        if (!telemetry.hasHomeLocation()) return SafetyDecision.hold("Čekám na Home Point potvrzený letovým kontrolérem DJI.");
-        if (!telemetry.hasAircraftLocation()) return SafetyDecision.hold("Dron nemá platnou polohu. GPS telefonu nenahrazuje lokalizaci dronu.");
+        // The pilot may explicitly run body/vision-directed modes without a verified DJI Home.
+        // RTH itself remains guarded in DjiConnection and MainActivity.
+        boolean homeBypass = configuration != null && configuration.flightWithoutHomeAccepted;
+        if (!telemetry.hasHomeLocation() && !homeBypass) {
+            return SafetyDecision.hold("Čekám na Home Point DJI, nebo zapni HOME POINT NEDOSTUPNÝ.");
+        }
+        if (!telemetry.hasAircraftLocation() && !homeBypass) {
+            return SafetyDecision.hold("Dron nemá platnou polohu. Pro pokračování zvol HOME POINT NEDOSTUPNÝ.");
+        }
         if (telemetry.signalPercent < 0) return SafetyDecision.hold("Čekám na kvalitu rádiového spojení.");
         if (telemetry.signalPercent < MINIMUM_SIGNAL_PERCENT) return SafetyDecision.stop("Slabé spojení mezi ovladačem a dronem.");
         if ("LEVEL_2".equals(telemetry.windLevel)) return SafetyDecision.stop("Silný vítr – automatický režim zastaven.");

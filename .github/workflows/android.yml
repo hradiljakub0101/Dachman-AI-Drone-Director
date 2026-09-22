@@ -95,7 +95,7 @@ jobs:
           mkdir -p release
           cp downloaded-apks/dji/debug/app-dji-debug.apk "release/Dachman-AI-Drone-Director-v${release_version}-DJI.apk"
           cp downloaded-apks/demo/debug/app-demo-debug.apk "release/Dachman-AI-Drone-Director-v${release_version}-Demo.apk"
-          cp docs/ANDROID_V0_15_0_CZ.md release/OVERENI-A-POKYNY.md
+          cp docs/ANDROID_V0_15_1_CZ.md release/OVERENI-A-POKYNY.md
           (
             cd release
             sha256sum "Dachman-AI-Drone-Director-v${release_version}-DJI.apk" > SHA256SUMS.txt
@@ -109,8 +109,8 @@ jobs:
         shell: bash
         run: |
           if gh release view "$release_tag" >/dev/null 2>&1; then
-            gh release edit "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes-file docs/ANDROID_V0_15_0_CZ.md
+            gh release edit "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes-file docs/ANDROID_V0_15_1_CZ.md
           else
-            gh release create "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes-file docs/ANDROID_V0_15_0_CZ.md
+            gh release create "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes-file docs/ANDROID_V0_15_1_CZ.md
           fi
           gh release upload "$release_tag" release/*.apk release/*.zip --clobber

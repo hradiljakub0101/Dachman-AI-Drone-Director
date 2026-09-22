@@ -123,6 +123,7 @@ final class DjiConnection implements DroneSession {
     private volatile boolean lowBatteryRthTriggered;
     private volatile boolean smartRthConfirmationSent;
     private volatile boolean flightObserved;
+    private volatile boolean flightWithoutHomeAccepted;
 
     private final Runnable connectionRetry = new Runnable() {
         @Override public void run() {
@@ -786,6 +787,10 @@ final class DjiConnection implements DroneSession {
         });
     }
 
+    @Override public void setFlightWithoutHomeAccepted(boolean accepted) {
+        flightWithoutHomeAccepted = accepted;
+    }
+
     @Override public void prepareReturnHome(int heightMeters, Completion completion) {
         FlightController current = flightController;
         FlightControllerState state = lastFlightState;
@@ -1058,10 +1063,12 @@ final class DjiConnection implements DroneSession {
         if (state.areMotorsOn() || state.isFlying()) return "Dron už má spuštěné motory nebo letí.";
         if (batteryPercent < SafetySupervisor.MINIMUM_BATTERY_PERCENT) return "Pro vzlet je potřeba alespoň dvacet pět procent baterie.";
         if (signalPercent < SafetySupervisor.MINIMUM_SIGNAL_PERCENT) return "Rádiové spojení je pro vzlet příliš slabé.";
-        if (!state.isHomeLocationSet() && !returnHomeStatus.ready) return "Domovský bod zatím není uložen.";
-        if (!returnHomeStatus.ready) return "Vzlet je zablokovaný: v aplikaci ulož a ověř návratový bod.";
-        String positionBlocked = HomePointPolicy.aircraftBlock(telemetry());
-        if (positionBlocked != null) return positionBlocked;
+        if (!flightWithoutHomeAccepted) {
+            if (!state.isHomeLocationSet() && !returnHomeStatus.ready) return "Domovský bod zatím není uložen.";
+            if (!returnHomeStatus.ready) return "Vzlet je zablokovaný: v aplikaci ulož a ověř návratový bod.";
+            String positionBlocked = HomePointPolicy.aircraftBlock(telemetry());
+            if (positionBlocked != null) return positionBlocked;
+        }
         if (state.isFailsafeEnabled()) return "DJI failsafe je aktivní.";
         if (state.getFlightWindWarning() != null && "LEVEL_2".equals(state.getFlightWindWarning().name())) return "Silný vítr blokuje autonomní vzlet.";
         return null;
