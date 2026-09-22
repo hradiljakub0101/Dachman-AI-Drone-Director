@@ -15,7 +15,7 @@ public final class FlightDirector {
     public void begin(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking,
             SafetyConfiguration safetyConfiguration) {
         TargetBox target = plan.mode == FlightMode.SURVEY_MAP || tracking == null
-            ? null : tracking.targetFor(plan.mode);
+            ? null : tracking.targetFor(plan);
         cameraDirector.begin(plan, tracking);
         float zoom = Math.max(CameraDirector.MIN_DIGITAL_ZOOM, cameraDirector.appliedZoomFactor());
         referenceTargetHeight = target == null ? 0.3f : Math.max(0.08f, target.height() / zoom);
@@ -35,7 +35,7 @@ public final class FlightDirector {
     public FlightCommand command(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking,
             SafetyConfiguration safetyConfiguration) {
         TargetBox target = plan.mode == FlightMode.SURVEY_MAP || tracking == null
-            ? null : tracking.targetFor(plan.mode);
+            ? null : tracking.targetFor(plan);
         if (target == null) return smoothMapCommand(plan, telemetry, safetyConfiguration);
 
         FlightProfile profile = plan.profile;
@@ -108,6 +108,7 @@ public final class FlightDirector {
         FlightCommand requested = new FlightCommand(pitch, roll, yaw, vertical,
             camera.gimbalPitch, camera.digitalZoomFactor);
         previous = smooth(previous, requested, 0.22f);
+        previous = enforceHeight(previous, telemetry.altitudeMeters, plan.level.maximumAltitudeMeters);
         return previous;
     }
 
@@ -174,7 +175,16 @@ public final class FlightDirector {
         if (telemetry.altitudeMeters >= plan.level.maximumAltitudeMeters && vertical > 0f) vertical = 0f;
         previous = smooth(previous, new FlightCommand(pitch, roll, yaw, vertical, gimbal,
             CameraDirector.MIN_DIGITAL_ZOOM), 0.22f);
+        previous = enforceHeight(previous, telemetry.altitudeMeters, plan.level.maximumAltitudeMeters);
         return previous;
+    }
+
+    private static FlightCommand enforceHeight(FlightCommand command, float altitude, float ceiling) {
+        if ((altitude >= ceiling && command.vertical > 0f) || (altitude <= 2f && command.vertical < 0f)) {
+            return new FlightCommand(command.pitch, command.roll, command.yaw, 0f,
+                command.gimbalPitch, command.digitalZoomFactor);
+        }
+        return command;
     }
 
     private static float[] bodyVelocityTo(TelemetrySnapshot telemetry, SiteSafetyPlan.Point point, float speed) {

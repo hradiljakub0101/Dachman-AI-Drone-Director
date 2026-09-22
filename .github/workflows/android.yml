@@ -43,13 +43,24 @@ jobs:
         run: python3 scripts/verify_android_rth_integration.py
       - name: Verify camera-only Worker tracking and optional map polygons
         run: python3 scripts/verify_android_worker_tracking.py
+      - name: Verify production flight-command wiring
+        run: python3 scripts/verify_android_flight_control.py
       - name: Test and build demo and DJI debug APKs
         working-directory: androidApp
         env:
           # Pull-request builds stay keyless; the protected main branch may
           # produce the installable DJI build automatically after merge.
           DJI_ANDROID_APP_KEY: ${{ ((github.event_name == 'workflow_dispatch' && inputs.use_dji_key) || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && secrets.DJI_ANDROID_APP_KEY || '' }}
-        run: gradle testDemoDebugUnitTest assembleDemoDebug assembleDjiDebug
+        run: gradle testDemoDebugUnitTest testDjiDebugUnitTest assembleDemoDebug assembleDjiDebug
+      - name: Upload unit and software-in-the-loop reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-reports
+          path: |
+            androidApp/app/build/reports/tests/
+            androidApp/app/build/test-results/
+          if-no-files-found: warn
       - name: Verify configured DJI key in APK and APK signature
         if: (github.event_name == 'workflow_dispatch' && inputs.use_dji_key) || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         env:
@@ -84,9 +95,11 @@ jobs:
           mkdir -p release
           cp downloaded-apks/dji/debug/app-dji-debug.apk "release/Dachman-AI-Drone-Director-v${release_version}-DJI.apk"
           cp downloaded-apks/demo/debug/app-demo-debug.apk "release/Dachman-AI-Drone-Director-v${release_version}-Demo.apk"
+          cp docs/ANDROID_V0_15_0_CZ.md release/OVERENI-A-POKYNY.md
           (
             cd release
-            zip -9 "Dachman-AI-Drone-Director-v${release_version}-Android.zip" "Dachman-AI-Drone-Director-v${release_version}-DJI.apk" "Dachman-AI-Drone-Director-v${release_version}-Demo.apk"
+            sha256sum "Dachman-AI-Drone-Director-v${release_version}-DJI.apk" > SHA256SUMS.txt
+            zip -9 "Dachman-AI-Drone-Director-v${release_version}-Android.zip" "Dachman-AI-Drone-Director-v${release_version}-DJI.apk" OVERENI-A-POKYNY.md SHA256SUMS.txt
           )
           echo "release_version=${release_version}" >> "$GITHUB_ENV"
           echo "release_tag=android-v${release_version}" >> "$GITHUB_ENV"
@@ -96,8 +109,8 @@ jobs:
         shell: bash
         run: |
           if gh release view "$release_tag" >/dev/null 2>&1; then
-            gh release edit "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes "Android DJI and demo builds verified by GitHub Actions, including mandatory verified Home Point, RTH height, Smart RTH, GO_HOME failsafe, low-battery handoff, emergency landing, camera recording, microSD preflight, USB/AOA integration, configured DJI key and APK signature."
+            gh release edit "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes-file docs/ANDROID_V0_15_0_CZ.md
           else
-            gh release create "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes "Android DJI and demo builds verified by GitHub Actions, including mandatory verified Home Point, RTH height, Smart RTH, GO_HOME failsafe, low-battery handoff, emergency landing, camera recording, microSD preflight, USB/AOA integration, configured DJI key and APK signature."
+            gh release create "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes-file docs/ANDROID_V0_15_0_CZ.md
           fi
           gh release upload "$release_tag" release/*.apk release/*.zip --clobber

@@ -63,7 +63,6 @@ final class DjiConnection implements DroneSession {
     private static final long VIDEO_STALE_MILLIS = 5_000L;
     private static final int MAX_VIDEO_RESTARTS = 3;
     private static final int AUTOMATIC_RTH_BATTERY_PERCENT = 25;
-    private static final float MAXIMUM_DEVICE_HOME_ACCURACY_METERS = 15f;
     private long lastVirtualStickErrorAt;
 
     private enum AircraftAction {
@@ -78,9 +77,11 @@ final class DjiConnection implements DroneSession {
     private boolean registering;
     private boolean registered;
     private boolean closed;
-    private boolean virtualStickEnabled;
-    private boolean manualDeflection;
-    private boolean pilotOverridePending;
+    private volatile boolean virtualStickEnabled;
+    private volatile boolean virtualStickEnabling;
+    private volatile boolean manualDeflection;
+    private volatile long virtualStickRevision;
+    private volatile boolean pilotOverridePending;
     private volatile boolean recording;
     /** Prevent overlapping start/stop requests while DJI completes the prior command. */
     private boolean recordingCommandPending;
@@ -91,7 +92,8 @@ final class DjiConnection implements DroneSession {
     private int connectionAttempts;
     private int batteryPercent = -1;
     private int signalPercent = -1;
-    private FlightControllerState lastFlightState;
+    private volatile FlightControllerState lastFlightState;
+    private volatile long lastFlightStateAt;
     private Aircraft aircraft;
     private FlightController flightController;
     private RemoteController remoteController;
@@ -389,6 +391,7 @@ final class DjiConnection implements DroneSession {
 
     private void onFlightState(FlightControllerState state) {
         lastFlightState = state;
+        lastFlightStateAt = android.os.SystemClock.elapsedRealtime();
         if (state.isFlying()) flightObserved = true;
         updateReturnHomeDistance(state);
         handleSmartRthRequest(state);
@@ -488,7 +491,7 @@ final class DjiConnection implements DroneSession {
         });
     }
 
-    private void onHardwareState(HardwareState state) {
+    private synchronized void onHardwareState(HardwareState state) {
         if (state == null) return;
         boolean gimbalDialMoved = Math.abs(state.getLeftDial()) > GIMBAL_DIAL_DEAD_ZONE;
         boolean deflected = stickMoved(state.getLeftStick()) || stickMoved(state.getRightStick())
@@ -496,20 +499,10 @@ final class DjiConnection implements DroneSession {
         manualDeflection = deflected;
         if (!deflected || pilotOverridePending) return;
         String pilotControl = gimbalDialMoved ? "zásah kolečkem gimbalu" : "zásah kniplem";
-        if (virtualStickEnabled) {
+        if (virtualStickEnabled || virtualStickEnabling) {
             pilotOverridePending = true;
-            virtualStickEnabled = false;
-            rotateGimbal(0f);
-            FlightController current = flightController;
-            if (current == null) {
-                pilotOverridePending = false;
-                postPilotOverride("PILOT OVERRIDE – AI řízení bylo zastaveno.");
-            } else {
-                current.setVirtualStickModeEnabled(false, error -> {
-                    pilotOverridePending = false;
-                    postPilotOverride("PILOT OVERRIDE – " + pilotControl + " vypnul AI řízení i kameru.");
-                });
-            }
+            postPilotOverride("PILOT OVERRIDE – " + pilotControl + " vypnul AI řízení i kameru.");
+            disableVirtualStick("Pilot převzal řízení.", (success, message) -> pilotOverridePending = false);
         } else if (aircraftAction != AircraftAction.NONE) {
             pilotOverridePending = true;
             cancelAircraftAction((success, message) -> {
@@ -619,7 +612,7 @@ final class DjiConnection implements DroneSession {
             && currentRemote != null && currentRemote.isConnected();
     }
 
-    @Override public void enableVirtualStick(Completion completion) {
+    @Override public synchronized void enableVirtualStick(Completion completion) {
         FlightController current = flightController;
         if (!supportsLiveControl() || current == null) {
             postCompletion(completion, false, "Mini 2 a RC-N1 nejsou připravené pro řízení.");
@@ -637,20 +630,67 @@ final class DjiConnection implements DroneSession {
         current.setRollPitchCoordinateSystem(FlightCoordinateSystem.BODY);
         current.setYawControlMode(YawControlMode.ANGULAR_VELOCITY);
         current.setVerticalControlMode(VerticalControlMode.VELOCITY);
+        final long generation = ++virtualStickRevision;
+        virtualStickEnabling = true;
         current.setVirtualStickModeEnabled(true, error -> {
-            boolean success = error == null;
-            virtualStickEnabled = success;
-            if (success) current.setVirtualStickAdvancedModeEnabled(true);
-            postCompletion(completion, success,
-                success ? "Supervised řízení je aktivní." : "Virtual Stick nelze zapnout: " + errorText(error));
+            main.post(() -> {
+                if (generation != virtualStickRevision || closed || current != flightController) {
+                    postCompletion(completion, false, "Spuštění Virtual Stick bylo zrušeno.");
+                    return;
+                }
+                if (error != null) {
+                    virtualStickEnabling = false;
+                    current.setVirtualStickModeEnabled(false, ignored -> {});
+                    postCompletion(completion, false, "Virtual Stick nelze zapnout: " + errorText(error));
+                    return;
+                }
+                verifyVirtualStick(current, generation, 0, completion);
+            });
         });
     }
 
-    @Override public void sendCommand(FlightCommand command) {
+    private synchronized void verifyVirtualStick(FlightController current, long generation,
+            int attempt, Completion completion) {
+        if (generation != virtualStickRevision || closed || current != flightController) {
+            postCompletion(completion, false, "Spuštění Virtual Stick bylo zrušeno.");
+            return;
+        }
+        if (manualDeflection) {
+            disableVirtualStick("Pilot zasáhl během aktivace.", (success, message) -> {});
+            postPilotOverride("PILOT OVERRIDE – zásah během aktivace AI.");
+            postCompletion(completion, false, "Pilot zasáhl během aktivace.");
+            return;
+        }
+        if (current.isVirtualStickControlModeAvailable()) {
+            current.setVirtualStickAdvancedModeEnabled(true);
+            virtualStickEnabled = true;
+            virtualStickEnabling = false;
+            postCompletion(completion, true, "DJI potvrdilo dostupné řízení Virtual Stick.");
+        } else if (attempt < 6) {
+            main.postDelayed(() -> verifyVirtualStick(current, generation, attempt + 1, completion), 250L);
+        } else {
+            disableVirtualStick("Virtual Stick není dostupný.", (success, message) -> {});
+            postCompletion(completion, false,
+                "DJI nepovolilo pohyb Virtual Stick. Ověř letový režim ovladače, polohu a stav dronu.");
+        }
+    }
+
+    @Override public synchronized void sendCommand(FlightCommand command, Completion completion) {
         FlightController current = flightController;
-        if (!virtualStickEnabled || current == null || command == null) return;
+        if (!virtualStickEnabled || current == null || command == null || manualDeflection
+                || !current.isVirtualStickControlModeAvailable()) {
+            completion.onComplete(false, "Virtual Stick není dostupný nebo zasáhl pilot.");
+            return;
+        }
+        final VirtualStickPacket packet;
+        try { packet = VirtualStickPacket.from(command); }
+        catch (IllegalArgumentException error) {
+            completion.onComplete(false, error.getMessage());
+            return;
+        }
         current.sendVirtualStickFlightControlData(
-            new FlightControlData(command.pitch, command.roll, command.yaw, command.vertical), error -> {
+            new FlightControlData(packet.pitch, packet.roll, packet.yaw, packet.vertical), error -> {
+                completion.onComplete(error == null, error == null ? "DJI povel přijalo." : errorText(error));
                 if (error == null) return;
                 long now = android.os.SystemClock.elapsedRealtime();
                 if (now - lastVirtualStickErrorAt < 2_000L) return;
@@ -712,6 +752,8 @@ final class DjiConnection implements DroneSession {
     }
 
     @Override public synchronized void disableVirtualStick(String reason, Completion completion) {
+        virtualStickRevision++;
+        virtualStickEnabling = false;
         FlightController current = flightController;
         virtualStickEnabled = false;
         if (current == null) {
@@ -756,9 +798,9 @@ final class DjiConnection implements DroneSession {
             return;
         }
         LocationCoordinate3D aircraftLocation = state.getAircraftLocation();
-        if (aircraftLocation == null || Double.isNaN(aircraftLocation.getLatitude())
-                || Double.isNaN(aircraftLocation.getLongitude())) {
-            postCompletion(completion, false, "Poloha dronu zatím není platná.");
+        String homeBlocked = HomePointPolicy.aircraftBlock(telemetry());
+        if (aircraftLocation == null || homeBlocked != null) {
+            postCompletion(completion, false, homeBlocked == null ? "Poloha dronu není dostupná." : homeBlocked);
             return;
         }
         if (heightMeters < 20 || heightMeters > 500) {
@@ -811,10 +853,9 @@ final class DjiConnection implements DroneSession {
             postCompletion(completion, false, "Návratový bod lze uložit pouze před spuštěním motorů.");
             return;
         }
-        if (!validCoordinate(latitude, longitude) || !Float.isFinite(accuracyMeters)
-                || accuracyMeters > MAXIMUM_DEVICE_HOME_ACCURACY_METERS) {
-            postCompletion(completion, false,
-                "Poloha telefonu není dostatečně přesná; požadována je přesnost do patnácti metrů.");
+        String blocked = HomePointPolicy.phoneBlock(telemetry(), latitude, longitude, accuracyMeters, 0L);
+        if (blocked != null) {
+            postCompletion(completion, false, blocked);
             return;
         }
         if (heightMeters < 20 || heightMeters > 500) {
@@ -827,7 +868,8 @@ final class DjiConnection implements DroneSession {
         current.setHomeLocation(requested, error -> {
             if (error != null) {
                 failReturnHomePreparation(completion,
-                    "DJI nepřijalo Home Point z telefonu: " + errorText(error));
+                    "DJI nepřijalo Home Point z telefonu: " + errorText(error)
+                        + ". Bod NENÍ uložen. Ověř GNSS dronu venku; oprávnění telefonu toto omezení neřeší.");
                 return;
             }
             current.getHomeLocation(new CommonCallbacks.CompletionCallbackWith<LocationCoordinate2D>() {
@@ -1018,6 +1060,8 @@ final class DjiConnection implements DroneSession {
         if (signalPercent < SafetySupervisor.MINIMUM_SIGNAL_PERCENT) return "Rádiové spojení je pro vzlet příliš slabé.";
         if (!state.isHomeLocationSet() && !returnHomeStatus.ready) return "Domovský bod zatím není uložen.";
         if (!returnHomeStatus.ready) return "Vzlet je zablokovaný: v aplikaci ulož a ověř návratový bod.";
+        String positionBlocked = HomePointPolicy.aircraftBlock(telemetry());
+        if (positionBlocked != null) return positionBlocked;
         if (state.isFailsafeEnabled()) return "DJI failsafe je aktivní.";
         if (state.getFlightWindWarning() != null && "LEVEL_2".equals(state.getFlightWindWarning().name())) return "Silný vítr blokuje autonomní vzlet.";
         return null;
@@ -1198,7 +1242,7 @@ final class DjiConnection implements DroneSession {
         boolean connected = currentAircraft != null && currentAircraft.isConnected() && compatibleModel;
         String product = "Nepřipojeno";
         if (currentAircraft != null && currentAircraft.getModel() != null) product = currentAircraft.getModel().getDisplayName();
-        if (state == null) {
+        if (state == null || android.os.SystemClock.elapsedRealtime() - lastFlightStateAt > 1_500L) {
             return new TelemetrySnapshot(registered, connected, product, "—", batteryPercent, 0,
                 0f, 0f, 0f, signalPercent, false, false, false, false, "UNKNOWN");
         }
@@ -1208,6 +1252,12 @@ final class DjiConnection implements DroneSession {
         LocationCoordinate2D homeLocation = state.getHomeLocation();
         double aircraftLatitude = aircraftLocation == null ? Double.NaN : aircraftLocation.getLatitude();
         double aircraftLongitude = aircraftLocation == null ? Double.NaN : aircraftLocation.getLongitude();
+        String gpsLevel = state.getGPSSignalLevel() == null ? "UNKNOWN" : state.getGPSSignalLevel().name();
+        // Coordinates can remain cached after GNSS loss; never treat them as a live position.
+        if (!("LEVEL_3".equals(gpsLevel) || "LEVEL_4".equals(gpsLevel) || "LEVEL_5".equals(gpsLevel))) {
+            aircraftLatitude = Double.NaN;
+            aircraftLongitude = Double.NaN;
+        }
         double homeLatitude = homeLocation == null ? Double.NaN : homeLocation.getLatitude();
         double homeLongitude = homeLocation == null ? Double.NaN : homeLocation.getLongitude();
         boolean homeLocationSet = state.isHomeLocationSet();

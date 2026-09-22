@@ -4,6 +4,13 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class ControlAuthorityTest {
+    @Test public void confirmingAnotherTargetDoesNotDowngradeActiveControl() {
+        ControlAuthority authority = new ControlAuthority();
+        authority.targetConfirmed(true);
+        authority.activateAi();
+        authority.targetConfirmed(true);
+        assertEquals(ControlAuthority.State.AI_ACTIVE, authority.state());
+    }
     @Test public void targetConfirmationPreparesAndApprovalActivatesAi() {
         ControlAuthority authority = new ControlAuthority();
         assertTrue(authority.targetConfirmed(true));

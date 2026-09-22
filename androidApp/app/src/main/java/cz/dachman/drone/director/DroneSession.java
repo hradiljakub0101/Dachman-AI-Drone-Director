@@ -24,7 +24,8 @@ public interface DroneSession {
     void detachVideo();
     boolean supportsLiveControl();
     void enableVirtualStick(Completion completion);
-    void sendCommand(FlightCommand command);
+    default void sendCommand(FlightCommand command) { sendCommand(command, (success, message) -> {}); }
+    void sendCommand(FlightCommand command, Completion completion);
     void disableVirtualStick(String reason, Completion completion);
     void toggleRecording(Completion completion);
     void takePhoto(Completion completion);

@@ -4,8 +4,8 @@ package cz.dachman.drone.director;
 public enum FlightMode {
     HOLD("HOLD – bez pohybu", false, false, 0),
     SURVEY_MAP("MAPOVACÍ OBLET", false, false, 90_000),
-    STATIC_TRACK("STATICKÝ ZÁBĚR", true, false, 120_000),
-    FOLLOW("FOLLOW TRASA", true, false, 60_000),
+    STATIC_TRACK("STATICKÉ SLEDOVÁNÍ", true, false, 120_000),
+    FOLLOW("FOLLOW – POHYB ZA CÍLEM", true, false, 60_000),
     DUO_FOLLOW("GROUP MODE", true, true, 60_000),
     ORBIT_LEFT("ORBIT VLEVO", true, false, 25_000),
     ORBIT_RIGHT("ORBIT VPRAVO", true, false, 25_000),

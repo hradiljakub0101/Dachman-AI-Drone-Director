@@ -22,7 +22,10 @@ public final class SafetySupervisor {
         if (plan == null || plan.mode == FlightMode.HOLD) return SafetyDecision.stop("Nebyl zvolen letový režim.");
         if (!telemetry.sdkRegistered) return SafetyDecision.stop("DJI SDK není zaregistrováno.");
         if (!telemetry.connected) return SafetyDecision.stop("Dron nebo ovladač není připojen.");
-        if (!telemetry.motorsOn || !telemetry.flying) return SafetyDecision.stop("Let musí zahájit pilot ručně.");
+        if (!Float.isFinite(telemetry.altitudeMeters) || !Float.isFinite(telemetry.headingDegrees)) {
+            return SafetyDecision.stop("Neplatná výška nebo orientace dronu.");
+        }
+        if (!telemetry.motorsOn || !telemetry.flying) return SafetyDecision.stop("Dron je na zemi. Nejprve proveď ruční nebo potvrzený automatický vzlet.");
         if (telemetry.failsafe) return SafetyDecision.stop("DJI failsafe – řízení převzal letový kontrolér.");
         if (telemetry.goingHome) return SafetyDecision.stop("Probíhá návrat domů – aplikace uvolnila řízení.");
         if (telemetry.batteryPercent < 0) return SafetyDecision.hold("Čekám na stav baterie.");
@@ -30,6 +33,7 @@ public final class SafetySupervisor {
         // DJI's controller is authoritative for GNSS/Home Point validity. Satellite count
         // remains visible to the pilot, but is not a second, contradictory hard threshold.
         if (!telemetry.hasHomeLocation()) return SafetyDecision.hold("Čekám na Home Point potvrzený letovým kontrolérem DJI.");
+        if (!telemetry.hasAircraftLocation()) return SafetyDecision.hold("Dron nemá platnou polohu. GPS telefonu nenahrazuje lokalizaci dronu.");
         if (telemetry.signalPercent < 0) return SafetyDecision.hold("Čekám na kvalitu rádiového spojení.");
         if (telemetry.signalPercent < MINIMUM_SIGNAL_PERCENT) return SafetyDecision.stop("Slabé spojení mezi ovladačem a dronem.");
         if ("LEVEL_2".equals(telemetry.windLevel)) return SafetyDecision.stop("Silný vítr – automatický režim zastaven.");
@@ -40,15 +44,14 @@ public final class SafetySupervisor {
         if (plan.mode.maxDurationMillis > 0 && nowMillis - startedAtMillis > plan.mode.maxDurationMillis) {
             return SafetyDecision.stop("Časový limit manévru vypršel; je nutné nové schválení.");
         }
-        if (VISUAL_TARGET_GATES_FLIGHT && plan.mode.requiresVisualTarget()) {
-            if (!tracking.hasRequiredTargets(plan.mode)) return SafetyDecision.hold("Chybí potvrzený pracovník pro tento režim.");
-            long oldest = tracking.primary == null ? nowMillis : tracking.primary.observedAtMillis;
-            float confidence = tracking.primary == null ? 0f : tracking.primary.confidence;
-            if (plan.mode.requiresSecondary) {
-                oldest = Math.min(oldest, tracking.secondary.observedAtMillis);
-                confidence = Math.min(confidence, tracking.secondary.confidence);
-            }
+        TargetBox target = tracking.targetFor(plan);
+        if (VISUAL_TARGET_GATES_FLIGHT && (plan.mode.requiresVisualTarget()
+                || (plan.mode != FlightMode.SURVEY_MAP && target != null))) {
+            if (!tracking.hasRequiredTargets(plan)) return SafetyDecision.hold("Chybí potvrzený cíl: " + plan.targets.label);
+            long oldest = target.observedAtMillis;
+            float confidence = target.confidence;
             long age = nowMillis - oldest;
+            if (age < 0 || !Float.isFinite(confidence)) return SafetyDecision.hold("Neplatný čas nebo jistota cíle.");
             if (age > TARGET_STOP_AFTER_MILLIS) return SafetyDecision.stop("AI ztratila sledovaný cíl.");
             if (age > TARGET_HOLD_AFTER_MILLIS) return SafetyDecision.hold("AI dočasně nevidí cíl – HOLD.");
             if (confidence < 0.35f) return SafetyDecision.hold("Nízká jistota rozpoznání pracovníka.");

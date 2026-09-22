@@ -81,13 +81,16 @@ public final class WorkerTracker {
                     AppearanceSignature appearance = AppearanceSignature.from(bitmap, left, top, right, bottom);
                     candidates.add(new TargetBox(left, top, right, bottom, category.getScore(), now, appearance));
                 }
-                TargetBox nextPrimary = match(primaryLock, candidates, null);
-                TargetBox nextSecondary = match(secondaryLock, candidates, nextPrimary);
-                if (primaryLock != null) primaryLock = nextPrimary == null ? primaryLock : nextPrimary;
-                if (secondaryLock != null) secondaryLock = nextSecondary == null ? secondaryLock : nextSecondary;
-                snapshot = new TrackingSnapshot(candidates, primaryLock, secondaryLock, now);
-                TrackingSnapshot published = snapshot;
-                main.post(() -> { if (!closed && listener != null) listener.onTracking(published); });
+                TrackingSnapshot published;
+                synchronized (this) {
+                    TargetBox nextPrimary = match(primaryLock, candidates, null);
+                    TargetBox nextSecondary = match(secondaryLock, candidates, nextPrimary);
+                    if (primaryLock != null) primaryLock = nextPrimary == null ? primaryLock : nextPrimary;
+                    if (secondaryLock != null) secondaryLock = nextSecondary == null ? secondaryLock : nextSecondary;
+                    snapshot = new TrackingSnapshot(candidates, primaryLock, secondaryLock, now);
+                    published = snapshot;
+                }
+                main.post(() -> { if (!closed && listener != null && snapshot == published) listener.onTracking(published); });
             } catch (Exception error) {
                 main.post(() -> { if (!closed && listener != null) listener.onTrackerError("AI analýza selhala: " + safe(error)); });
             } finally {
@@ -98,11 +101,12 @@ public final class WorkerTracker {
     }
 
     /** Selects the closest currently detected person. Slot one is primary, slot two secondary. */
-    public boolean selectAt(int slot, float normalizedX, float normalizedY) {
+    public synchronized boolean selectAt(int slot, float normalizedX, float normalizedY) {
         List<TargetBox> candidates = snapshot.candidates;
         TargetBox selected = null;
         float best = Float.MAX_VALUE;
         for (TargetBox candidate : candidates) {
+            if (SystemClock.elapsedRealtime() - candidate.observedAtMillis > SafetySupervisor.TARGET_HOLD_AFTER_MILLIS) continue;
             float distance = distance(candidate.centerX(), candidate.centerY(), normalizedX, normalizedY);
             if (candidate.contains(normalizedX, normalizedY)) distance *= 0.2f;
             if (distance < best) { best = distance; selected = candidate; }
@@ -120,7 +124,7 @@ public final class WorkerTracker {
         return true;
     }
 
-    public void clearSelections() {
+    public synchronized void clearSelections() {
         primaryLock = null;
         secondaryLock = null;
         snapshot = new TrackingSnapshot(snapshot.candidates, null, null, snapshot.processedAtMillis);

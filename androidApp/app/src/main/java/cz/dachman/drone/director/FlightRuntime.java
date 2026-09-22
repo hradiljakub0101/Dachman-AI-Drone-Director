@@ -3,6 +3,7 @@ package cz.dachman.drone.director;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.LongSupplier;
 
 /** Sends commands at ten hertz and applies the safety supervisor before every packet. */
 public final class FlightRuntime {
@@ -15,11 +16,15 @@ public final class FlightRuntime {
     private final Listener listener;
     private final SafetySupervisor safety = new SafetySupervisor();
     private final FlightDirector director = new FlightDirector();
-    private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor();
+    private final ScheduledExecutorService timer;
+    private final LongSupplier clock;
     private volatile TelemetrySnapshot telemetry = TelemetrySnapshot.disconnected();
     private volatile TrackingSnapshot tracking = TrackingSnapshot.empty();
     private volatile SafetyConfiguration safetyConfiguration = SafetyConfiguration.defaults();
     private volatile boolean active;
+    private boolean starting;
+    private long lastTelemetryAt;
+    private long lastAcceptedAt;
     private volatile FlightPlan plan;
     private volatile long startedAt;
     private volatile long holdSince;
@@ -31,12 +36,22 @@ public final class FlightRuntime {
     private String lastMessage = "";
 
     public FlightRuntime(DroneSession session, Listener listener) {
-        this.session = session;
-        this.listener = listener;
-        timer.scheduleAtFixedRate(this::tick, 100L, 100L, TimeUnit.MILLISECONDS);
+        this(session, listener, android.os.SystemClock::elapsedRealtime, true);
     }
 
-    public void updateTelemetry(TelemetrySnapshot telemetry) { this.telemetry = telemetry; }
+    /** Same production loop, with a manual clock and no timer for deterministic offline tests. */
+    FlightRuntime(DroneSession session, Listener listener, LongSupplier clock, boolean schedule) {
+        this.session = session;
+        this.listener = listener;
+        this.clock = clock;
+        timer = schedule ? Executors.newSingleThreadScheduledExecutor() : null;
+        if (timer != null) timer.scheduleAtFixedRate(this::tickSafely, 100L, 100L, TimeUnit.MILLISECONDS);
+    }
+
+    public synchronized void updateTelemetry(TelemetrySnapshot telemetry) {
+        this.telemetry = telemetry;
+        lastTelemetryAt = now();
+    }
     public void updateTracking(TrackingSnapshot tracking) { this.tracking = tracking; }
     public void updateSafetyConfiguration(SafetyConfiguration configuration) {
         safetyConfiguration = configuration == null ? SafetyConfiguration.defaults() : configuration;
@@ -47,47 +62,77 @@ public final class FlightRuntime {
     public boolean isActive() { return active; }
     public BuildingSpatialModel spatialModel() { return spatialModel; }
 
-    public SafetyDecision preflight(FlightPlan candidate) {
+    public synchronized SafetyDecision preflight(FlightPlan candidate) {
+        if (now() - lastTelemetryAt > 1_500L) return SafetyDecision.stop("Telemetrie dronu není aktuální.");
         return safety.evaluate(candidate, telemetry, tracking, safetyConfiguration, now(), now());
     }
 
     public synchronized void start(FlightPlan candidate, DroneSession.Completion completion) {
         if (closed) { completion.onComplete(false, "Řízení aplikace je ukončeno."); return; }
-        if (active) { completion.onComplete(false, "Jiný manévr je právě aktivní."); return; }
+        if (candidate == null || candidate.mode == FlightMode.HOLD) {
+            completion.onComplete(false, "Vyber platný autonomní režim."); return;
+        }
+        if (active || starting) { completion.onComplete(false, "Jiný manévr se spouští nebo je aktivní."); return; }
         SafetyDecision decision = preflight(candidate);
         if (decision.action != SafetyDecision.Action.ALLOW) {
             completion.onComplete(false, decision.reason);
             return;
         }
         final long challenge = ++revision;
+        starting = true;
+        startedAt = now();
         director.begin(candidate, telemetry, tracking, safetyConfiguration);
         if (candidate.mode == FlightMode.SURVEY_MAP) {
             surveyBuilder = new BuildingSpatialModel.Builder(safetyConfiguration.site.roofBoundary);
         }
-        session.enableVirtualStick((success, message) -> {
+        try { session.enableVirtualStick((success, message) -> {
+          synchronized (FlightRuntime.this) {
             if (challenge != revision || closed) {
-                if (success) session.disableVirtualStick("Pozdní spuštění bylo zrušeno.", (ignored, detail) -> {});
                 completion.onComplete(false, "Spuštění manévru bylo zrušeno.");
                 return;
             }
-            if (!success) { completion.onComplete(false, message); return; }
+            starting = false;
+            SafetyDecision refreshed = preflight(candidate);
+            if (!success || refreshed.action != SafetyDecision.Action.ALLOW) {
+                if (success) session.disableVirtualStick(refreshed.reason, (ignored, detail) -> {});
+                completion.onComplete(false, success ? refreshed.reason : message);
+                return;
+            }
             plan = candidate;
             startedAt = now();
+            lastAcceptedAt = startedAt;
             holdSince = 0L;
             lastCommand = FlightCommand.ZERO;
             active = true;
             emit("AKTIVNÍ: " + candidate.mode.label, FlightCommand.ZERO);
             completion.onComplete(true, message);
-        });
+          }
+        }); }
+        catch (RuntimeException error) {
+            starting = false;
+            completion.onComplete(false, "Zapnutí DJI Virtual Stick selhalo: "
+                + error.getClass().getSimpleName());
+        }
     }
 
     public void hold(String reason) { stop(reason == null ? "HOLD" : reason); }
     public void abort(String reason) { stop(reason == null ? "ABORT" : reason); }
 
-    private void tick() {
+    private void tickSafely() {
+        try { tick(); }
+        catch (RuntimeException error) { stop("Chyba řídicí smyčky – AI vypnuta: " + error.getClass().getSimpleName()); }
+    }
+
+    synchronized void tick() {
+        if (starting && now() - startedAt > 3_000L) {
+            stop("DJI nepotvrdilo zapnutí řízení – AI vypnuta.");
+            return;
+        }
         FlightPlan current = plan;
         if (!active || current == null) return;
         long now = now();
+        if (now - lastTelemetryAt > 1_500L) { stop("Telemetrie dronu není aktuální – AI vypnuta."); return; }
+        if (now - lastAcceptedAt > 1_500L) { stop("DJI nepotvrzuje příjem povelů – AI vypnuta."); return; }
         SafetyDecision decision = safety.evaluate(current, telemetry, tracking,
             safetyConfiguration, now, startedAt);
         if (decision.action == SafetyDecision.Action.STOP) {
@@ -100,7 +145,8 @@ public final class FlightRuntime {
                 && (current.mode.requiresMapRoute() || current.mode.requiresMapOrbitCenter());
             FlightCommand braking = localizationLost
                 ? brakingCommand(lastCommand, now - holdSince) : FlightCommand.ZERO;
-            session.sendCommand(braking);
+            send(braking);
+            if (!active) return;
             emit(localizationLost ? "AI BRZDÍ – ztráta prostorové lokalizace" : decision.reason, braking);
             if (now - holdSince > 2_500L) stop(decision.reason);
             return;
@@ -113,14 +159,28 @@ public final class FlightRuntime {
             spatialModel = next;
             if (next.observations % 10 == 0) listener.onSpatialModelUpdated(next);
         }
-        session.sendCommand(command);
+        send(command);
+        if (!active) return;
         lastCommand = command;
         emit("AKTIVNÍ: " + current.mode.label, command);
     }
 
+    private void send(FlightCommand command) {
+        VirtualStickPacket.from(command);
+        final long generation = revision;
+        session.sendCommand(command, (success, message) -> {
+            synchronized (FlightRuntime.this) {
+                if (!active || generation != revision) return;
+                if (success) lastAcceptedAt = now();
+                else stop("DJI odmítlo pohyb – AI vypnuta: " + message);
+            }
+        });
+    }
+
     private synchronized void stop(String reason) {
         revision++;
-        if (!active && plan == null) return;
+        if (!active && !starting && plan == null) return;
+        starting = false;
         active = false;
         if (plan == null || plan.mode != FlightMode.SURVEY_MAP || surveyBuilder == null) {
             surveyBuilder = null;
@@ -134,7 +194,13 @@ public final class FlightRuntime {
         director.reset();
         lastCommand = FlightCommand.ZERO;
         session.sendCommand(FlightCommand.ZERO);
-        session.disableVirtualStick(reason, (success, message) -> emit(reason, FlightCommand.ZERO));
+        emit(reason, FlightCommand.ZERO);
+        final long generation = revision;
+        session.disableVirtualStick(reason, (success, message) -> {
+            synchronized (FlightRuntime.this) {
+                if (!success && generation == revision) emit(message, FlightCommand.ZERO);
+            }
+        });
     }
 
     private void emit(String message, FlightCommand command) {
@@ -148,10 +214,10 @@ public final class FlightRuntime {
         closed = true;
         revision++;
         stop("Aplikace ukončena – HOLD");
-        timer.shutdownNow();
+        if (timer != null) timer.shutdownNow();
     }
 
-    private static long now() { return android.os.SystemClock.elapsedRealtime(); }
+    private long now() { return clock.getAsLong(); }
 
     static FlightCommand brakingCommand(FlightCommand previous, long elapsedMillis) {
         if (previous == null || elapsedMillis >= 1_500L) return FlightCommand.ZERO;

@@ -28,7 +28,7 @@ public final class TrackingOverlay extends View {
     }
 
     public void setTapListener(TapListener tapListener) { this.tapListener = tapListener; }
-    public void setSelectionSlot(int slot) { selectionSlot = slot == 2 ? 2 : 1; invalidate(); }
+    public void setSelectionSlot(int slot) { selectionSlot = slot == 0 ? 0 : slot == 2 ? 2 : 1; invalidate(); }
     public int getSelectionSlot() { return selectionSlot; }
     public void setSnapshot(TrackingSnapshot snapshot) { this.snapshot = snapshot; invalidate(); }
 
@@ -50,7 +50,7 @@ public final class TrackingOverlay extends View {
         canvas.drawLine(cx - dp(16), cy, cx + dp(16), cy, boxPaint);
         canvas.drawLine(cx, cy - dp(16), cx, cy + dp(16), boxPaint);
         textPaint.setColor(selectionSlot == 1 ? GREEN : ORANGE);
-        canvas.drawText("KLEPNI NA WORKER " + selectionSlot, dp(12), getHeight() - dp(14), textPaint);
+        if (selectionSlot != 0) canvas.drawText("KLEPNI NA WORKER " + selectionSlot, dp(12), getHeight() - dp(14), textPaint);
     }
 
     private void drawBox(Canvas canvas, TargetBox box, Paint paint, String label) {
@@ -58,6 +58,9 @@ public final class TrackingOverlay extends View {
             box.right * getWidth(), box.bottom * getHeight());
         canvas.drawRoundRect(rect, dp(5), dp(5), paint);
         if (label != null) {
+            boolean stale = android.os.SystemClock.elapsedRealtime() - box.observedAtMillis
+                > SafetySupervisor.TARGET_HOLD_AFTER_MILLIS;
+            if (stale) label += " • ZTRACEN";
             textPaint.setColor(paint.getColor());
             canvas.drawText(label + "  " + Math.round(box.confidence * 100f) + " %",
                 rect.left + dp(4), Math.max(dp(16), rect.top - dp(5)), textPaint);
@@ -65,7 +68,7 @@ public final class TrackingOverlay extends View {
     }
 
     @Override public boolean onTouchEvent(MotionEvent event) {
-        if (event.getAction() == MotionEvent.ACTION_UP && tapListener != null && getWidth() > 0 && getHeight() > 0) {
+        if (selectionSlot != 0 && event.getAction() == MotionEvent.ACTION_UP && tapListener != null && getWidth() > 0 && getHeight() > 0) {
             tapListener.onTargetTap(event.getX() / getWidth(), event.getY() / getHeight(), selectionSlot);
             performClick();
         }

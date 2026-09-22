@@ -28,4 +28,16 @@ public final class TrackingSnapshot {
     public TargetBox targetFor(FlightMode mode) {
         return mode.requiresSecondary ? TargetBox.union(primary, secondary) : primary;
     }
+
+    public boolean hasRequiredTargets(FlightPlan plan) {
+        return !plan.mode.requiresPrimary || targetFor(plan) != null;
+    }
+
+    public TargetBox targetFor(FlightPlan plan) {
+        if (plan.targets == TargetSelection.WORKER_TWO) return secondary;
+        if (plan.targets == TargetSelection.BOTH) {
+            return primary == null || secondary == null ? null : TargetBox.union(primary, secondary);
+        }
+        return primary;
+    }
 }

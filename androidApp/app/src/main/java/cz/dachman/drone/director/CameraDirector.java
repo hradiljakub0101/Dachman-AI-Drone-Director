@@ -47,11 +47,9 @@ public final class CameraDirector {
         float predictedX = clamp(target.centerX() + velocityX * LOOK_AHEAD_SECONDS, 0f, 1f);
         float predictedY = clamp(target.centerY() + velocityY * LOOK_AHEAD_SECONDS, 0f, 1f);
 
-        // Give a moving worker a little more room in the direction they are walking.
-        float movementLead = clamp(velocityX * 0.12f, -0.075f, 0.075f);
-        float desiredX = clamp(framing.centerX - movementLead, 0.34f, 0.66f);
-        float horizontalError = deadZone(predictedX - desiredX, HORIZONTAL_DEAD_ZONE);
-        float verticalError = deadZone(predictedY - framing.centerY, VERTICAL_DEAD_ZONE);
+        // All worker modes centre the approved target; prediction compensates image latency.
+        float horizontalError = deadZone(predictedX - 0.5f, HORIZONTAL_DEAD_ZONE);
+        float verticalError = deadZone(predictedY - 0.5f, VERTICAL_DEAD_ZONE);
 
         float maximumPitchSpeed = pitchLimit(plan.profile);
         float requestedGimbalPitch = clamp(-verticalError * 46f,
@@ -135,7 +133,7 @@ public final class CameraDirector {
     }
 
     private static TargetBox target(FlightPlan plan, TrackingSnapshot tracking) {
-        return plan == null || tracking == null ? null : tracking.targetFor(plan.mode);
+        return plan == null || tracking == null ? null : tracking.targetFor(plan);
     }
 
     private static float pitchLimit(FlightProfile profile) {

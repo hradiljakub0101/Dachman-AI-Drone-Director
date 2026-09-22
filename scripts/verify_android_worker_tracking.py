@@ -10,7 +10,7 @@ manifest = (root / "androidApp/app/src/main/AndroidManifest.xml").read_text(enco
 
 required = {
     "visual target selection": "VYBRAT WORKER 1" in ui and "VYBRAT WORKER 2" in ui,
-    "camera-centred flight input": "tracking.targetFor(plan.mode)" in flight,
+    "camera-centred flight input": "tracking.targetFor(plan)" in flight,
     "visual target safety gate": "requiresVisualTarget()" in safety,
     "pilot override": "manualRearmRequired()" in ui,
     "optional safety polygons": "forbiddenPolygon" in map_view,

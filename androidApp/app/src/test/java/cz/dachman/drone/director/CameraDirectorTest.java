@@ -79,7 +79,7 @@ public final class CameraDirectorTest {
         assertTrue(command.digitalZoomFactor <= 1.45f);
     }
 
-    @Test public void orbitModesKeepOppositeLeadRoom() {
+    @Test public void orbitModesKeepTargetInImageCentre() {
         TargetBox centred = box(0.42f, 0.28f, 0.58f, 0.68f, 1_000L);
         TrackingSnapshot tracking = one(centred);
         CameraDirector left = director();
@@ -89,8 +89,8 @@ public final class CameraDirectorTest {
         left.begin(leftPlan, tracking);
         right.begin(rightPlan, tracking);
 
-        assertTrue(left.command(leftPlan, tracking).horizontalError < 0f);
-        assertTrue(right.command(rightPlan, tracking).horizontalError > 0f);
+        assertEquals(0f, left.command(leftPlan, tracking).horizontalError, 0.0001f);
+        assertEquals(0f, right.command(rightPlan, tracking).horizontalError, 0.0001f);
     }
 
     @Test public void motionPredictionCreatesLeadBeforeWorkerReachesEdge() {

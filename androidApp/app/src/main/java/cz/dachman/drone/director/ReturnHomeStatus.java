@@ -46,7 +46,7 @@ public final class ReturnHomeStatus {
             double verificationErrorMeters, int rthHeightMeters, boolean smartRthEnabled,
             boolean failSafeGoHome) {
         boolean coordinateValid = validCoordinate(latitude, longitude);
-        boolean accurate = !Double.isNaN(verificationErrorMeters)
+        boolean accurate = Double.isFinite(verificationErrorMeters) && verificationErrorMeters >= 0d
             && verificationErrorMeters <= MAXIMUM_HOME_VERIFICATION_ERROR_METERS;
         boolean heightValid = rthHeightMeters >= 20 && rthHeightMeters <= 500;
         boolean ready = coordinateValid && accurate && heightValid && smartRthEnabled && failSafeGoHome;

@@ -25,7 +25,7 @@ public final class ControlAuthority {
     /** A newly confirmed target may prepare AI unless the pilot takeover latch is set. */
     public synchronized boolean targetConfirmed(boolean targetAvailable) {
         if (!targetAvailable || manualRearmRequired || state == State.RTH) return false;
-        state = State.AI_READY;
+        if (state != State.AI_ACTIVE) state = State.AI_READY;
         return true;
     }
 

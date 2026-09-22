@@ -39,7 +39,9 @@ final class DjiConnection implements DroneSession {
         completion.onComplete(false, "Offline náhled nemůže řídit dron.");
     }
 
-    @Override public void sendCommand(FlightCommand command) {}
+    @Override public void sendCommand(FlightCommand command, Completion completion) {
+        completion.onComplete(false, "Demo nemá připojený letový kontrolér.");
+    }
 
     @Override public void disableVirtualStick(String reason, Completion completion) {
         completion.onComplete(true, reason);

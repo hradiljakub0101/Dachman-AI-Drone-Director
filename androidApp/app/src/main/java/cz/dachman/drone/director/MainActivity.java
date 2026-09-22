@@ -25,6 +25,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.ArrayAdapter;
+import android.widget.AdapterView;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.FrameLayout;
@@ -102,6 +103,11 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private Button controlDrawerHandle;
     private Button mapDrawerHandle;
     private Spinner profileSpinner;
+    private Spinner targetSpinner;
+    private TargetSelection selectedTargets = TargetSelection.WORKER_ONE;
+    private TargetSelection missionTargets = TargetSelection.WORKER_ONE;
+    private CancellationSignal homeLocationRequest;
+    private TextView flightReadinessText;
     private SeekBar heightSeek;
     private SeekBar rthHeightSeek;
     private SeekBar standoffSeek;
@@ -136,7 +142,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         if (!missionActive) return;
         FlightMode mode = missionModes[missionIndex];
         FlightPlan plan = new FlightPlan(mode, FlightLevel.ofMeters(heightSeek.getProgress()),
-            (FlightProfile) profileSpinner.getSelectedItem());
+            (FlightProfile) profileSpinner.getSelectedItem(), missionTargets);
         showStatus("AI spouští kompozici " + (missionIndex + 1) + " z " + missionModes.length
             + ": " + mode.label + ". Pilot může kdykoli převzít řízení.");
         executeApproved(PendingKind.MODE, plan);
@@ -303,6 +309,13 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             dp(300), dp(29), Gravity.TOP | Gravity.LEFT);
         cameraDirectorParams.setMargins(dp(8), dp(153), 0, 0);
         cameraArea.addView(cameraDirectorText, cameraDirectorParams);
+        flightReadinessText = text("LET: čekám na telemetrii", 10, ORANGE, true);
+        flightReadinessText.setPadding(dp(9), dp(3), dp(9), dp(3));
+        flightReadinessText.setBackground(card(Color.argb(150, 5, 17, 24), 8, ORANGE));
+        FrameLayout.LayoutParams readinessParams = new FrameLayout.LayoutParams(
+            dp(390), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.LEFT);
+        readinessParams.setMargins(dp(8), dp(184), dp(8), 0);
+        cameraArea.addView(flightReadinessText, readinessParams);
 
         flightRadar = new FlightRadarView(this);
         FrameLayout.LayoutParams radarParams = new FrameLayout.LayoutParams(
@@ -372,7 +385,24 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         workerRow.addView(workerOneButton, weightedButtonParams());
         workerRow.addView(workerTwoButton, weightedButtonParams());
         controls.addView(workerRow);
+        targetSpinner = new Spinner(this);
+        targetSpinner.setAdapter(new DarkSpinnerAdapter<>(this, TargetSelection.values()));
+        targetSpinner.setContentDescription("Cíl řízení letu");
+        targetSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                TargetSelection next = TargetSelection.values()[position];
+                if (next == selectedTargets) return;
+                hold();
+                selectedTargets = next;
+                showStatus("Cíl letu: " + next.label + ". Vyber a potvrď režim.");
+                renderFlightReadiness();
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+        });
+        controls.addView(targetSpinner, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
         Button clearWorkers = button("ZRUŠIT VÝBĚR PRACOVNÍKŮ", PANEL_LIGHT, () -> {
+            hold();
             tracker.clearSelections();
             invalidatePending("Obrazový výběr osob byl zrušen.");
         });
@@ -632,19 +662,24 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             showStatus("Pilot převzal řízení. Nejdřív stiskni RUČNĚ PŘIPRAVIT AI ZNOVU.");
             return;
         }
-        if (mode.requiresVisualTarget() && (tracker == null
-                || !tracker.snapshot().hasRequiredTargets(mode))) {
-            showStatus(mode == FlightMode.DUO_FOLLOW
-                ? "Nejprve v obrazu vyber Worker 1 a Worker 2."
-                : "Nejprve v obrazu vyber sledovanou osobu.");
+        FlightPlan candidate = selectedPlan(mode);
+        if (mode.requiresPrimary && (tracker == null
+                || !tracker.snapshot().hasRequiredTargets(candidate))) {
+            showStatus("Nejprve označ zvolený cíl: " + selectedTargets.label);
             return;
         }
+        SafetyDecision readiness = runtime.preflight(candidate);
+        if (readiness.action != SafetyDecision.Action.ALLOW) {
+            showStatus("LET BLOKOVÁN: " + readiness.reason);
+            flightReadinessText.setText("LET BLOKOVÁN: " + readiness.reason);
+            revealControlDrawer();
+            return;
+        }
+        if (runtime.isActive()) runtime.hold("Změna manévru – HOLD");
         authority.targetConfirmed(true);
         updateAuthorityUi();
-        if (runtime.isActive()) runtime.hold("Změna manévru – HOLD");
         invalidatePending(null);
-        FlightProfile profile = (FlightProfile) profileSpinner.getSelectedItem();
-        pendingPlan = new FlightPlan(mode, FlightLevel.ofMeters(heightSeek.getProgress()), profile);
+        pendingPlan = candidate;
         pendingKind = PendingKind.MODE;
         gate.request(pendingPlan.approvalText());
         pendingText.setText(pendingPlan.approvalText()
@@ -681,11 +716,12 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             showStatus("Pilot převzal řízení. Nejdřív stiskni RUČNĚ PŘIPRAVIT AI ZNOVU.");
             return;
         }
-        if (tracker == null || !tracker.snapshot().hasRequiredTargets(FlightMode.FOLLOW)) {
+        if (tracker == null || !tracker.snapshot().hasRequiredTargets(selectedPlan(FlightMode.FOLLOW))) {
             showStatus("Před misí vyber sledovanou osobu v živém obrazu.");
             return;
         }
         authority.targetConfirmed(true);
+        missionTargets = selectedTargets;
         updateAuthorityUi();
         if (runtime != null && runtime.isActive()) runtime.abort("Příprava mise – HOLD");
         invalidatePending(null);
@@ -824,12 +860,16 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     private void selectTarget(float x, float y, int slot) {
         if (tracker == null) return;
+        if (runtime.isActive()) {
+            showStatus("Před změnou identity sledované osoby stiskni HOLD.");
+            return;
+        }
         if (tracker.selectAt(slot, x, y)) {
-            boolean ready = slot != 1 || authority.targetConfirmed(true);
+            boolean ready = authority.targetConfirmed(true);
             updateAuthorityUi();
             invalidatePending("Worker " + slot + " potvrzen; "
                 + (ready ? "AI je připravena." : "pilotní převzetí zůstává uzamčené."));
-            if (slot == 1 && tracker.snapshot().secondary == null) selectWorkerSlot(2);
+            overlay.setSelectionSlot(0);
         } else {
             showStatus("V místě klepnutí není jednoznačně rozpoznaná osoba.");
         }
@@ -915,6 +955,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
                 value.horizontalSpeedMetersPerSecond, position));
             if (flightMap != null) flightMap.updateTelemetry(value);
             if (flightRadar != null) flightRadar.updateTelemetry(value);
+            renderFlightReadiness();
         });
     }
 
@@ -1051,6 +1092,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             targetText.setText("Worker 1: " + targetLabel(snapshot.primary)
                 + "   Worker 2: " + targetLabel(snapshot.secondary)
                 + "   Osoby: " + snapshot.candidates.size());
+            renderFlightReadiness();
         });
     }
 
@@ -1064,6 +1106,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     @Override public void onRuntimeState(boolean active, String message, FlightCommand command) {
         ui(() -> {
+            if (runtime != null && active != runtime.isActive()) return;
             cameraAutomationActive = active;
             if (!active && authority.state() == ControlAuthority.State.AI_ACTIVE) {
                 if (message.startsWith("Kompozice dokončena")) authority.compositionCompleted();
@@ -1079,10 +1122,11 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             String zoom = Float.isFinite(command.digitalZoomFactor)
                 ? String.format(Locale.getDefault(), "%.2f×", command.digitalZoomFactor) : "—";
             commandText.setText(String.format(Locale.getDefault(),
-                "PITCH %.2f   ROLL %.2f   YAW %.1f   VERT %.2f   GIMBAL %.1f   ZOOM %s",
+                "VPŘED %.2f   VPRAVO %.2f   OTOČ %.1f   VZHŮRU %.2f   GIMBAL %.1f   ZOOM %s",
                 command.pitch, command.roll, command.yaw, command.vertical,
                 command.gimbalPitch, zoom));
             renderCameraDirectorUi();
+            renderFlightReadiness();
             FusionStatus fusion = currentFusionStatus();
             if (auditLog != null) auditLog.append(active ? "AI_COMMAND" : "AI_STATE", message, fusion, command);
         });
@@ -1133,6 +1177,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     }
 
     private void prepareHomeFromPhone() {
+        String blocked = HomePointPolicy.aircraftBlock(telemetry);
+        if (blocked != null) { showStatus(blocked); return; }
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
                 != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION,
@@ -1144,20 +1190,37 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             showStatus("Služba polohy telefonu není dostupná.");
             return;
         }
-        String provider = manager.isProviderEnabled(LocationManager.GPS_PROVIDER)
-            ? LocationManager.GPS_PROVIDER : LocationManager.NETWORK_PROVIDER;
+        if (!manager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+            showStatus("Zapni polohu GPS telefonu a přejdi ven na místo vzletu.");
+            return;
+        }
+        if (homeLocationRequest != null) homeLocationRequest.cancel();
+        final CancellationSignal request = new CancellationSignal();
+        homeLocationRequest = request;
+        main.postDelayed(() -> {
+            if (homeLocationRequest != request) return;
+            request.cancel(); homeLocationRequest = null;
+            showStatus("Telefon do dvaceti sekund nezískal přesnou GPS polohu. Zkus to venku znovu.");
+        }, 20_000L);
         showStatus("Zjišťuji přesnou polohu telefonu pro Home Point…");
         try {
-            manager.getCurrentLocation(provider, null, getMainExecutor(), location -> {
+            manager.getCurrentLocation(LocationManager.GPS_PROVIDER, request, getMainExecutor(), location -> {
+                if (homeLocationRequest != request || request.isCanceled()) return;
+                homeLocationRequest = null;
                 if (location == null) {
                     showStatus("Telefon neposkytl platnou polohu. Zapni přesnou polohu a zkus to znovu.");
                     return;
                 }
+                long age = (android.os.SystemClock.elapsedRealtimeNanos() - location.getElapsedRealtimeNanos()) / 1_000_000L;
+                String invalid = HomePointPolicy.phoneBlock(telemetry, location.getLatitude(), location.getLongitude(),
+                    location.hasAccuracy() ? location.getAccuracy() : Float.POSITIVE_INFINITY, age);
+                if (invalid != null) { showStatus(invalid); return; }
                 dji.prepareReturnHomeFromDevice(location.getLatitude(), location.getLongitude(),
                     location.hasAccuracy() ? location.getAccuracy() : Float.POSITIVE_INFINITY,
                     rthHeightSeek.getProgress(), this::showCompletion);
             });
         } catch (SecurityException exception) {
+            request.cancel(); homeLocationRequest = null;
             showStatus("Android nepovolil přístup k přesné poloze telefonu.");
         }
     }
@@ -1171,19 +1234,20 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     }
 
     @Override protected void onPause() {
+        if (homeLocationRequest != null) { homeLocationRequest.cancel(); homeLocationRequest = null; }
         sampling = false;
         main.removeCallbacks(frameSampler);
         missionActive = false;
         main.removeCallbacks(missionPrompt);
         if (flightMap != null) flightMap.onHostPause();
         if (runtime != null) runtime.hold("HOLD – aplikace není v popředí");
-        authority.stopToManual();
+        if (authentication == null) authority.stopToManual();
         updateAuthorityUi();
         super.onPause();
     }
 
     @Override protected void onStop() {
-        invalidatePending(null);
+        if (authentication == null) invalidatePending(null);
         super.onStop();
     }
 
@@ -1217,7 +1281,28 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     private FusionStatus currentFusionStatus() {
         TrackingSnapshot tracking = tracker == null ? TrackingSnapshot.empty() : tracker.snapshot();
-        return tracking.primary != null ? FusionStatus.IMAGE_OK : FusionStatus.HOLD;
+        TargetBox target = tracking.targetFor(selectedPlan(FlightMode.FOLLOW));
+        return target != null && android.os.SystemClock.elapsedRealtime() - target.observedAtMillis
+            <= SafetySupervisor.TARGET_HOLD_AFTER_MILLIS ? FusionStatus.IMAGE_OK : FusionStatus.HOLD;
+    }
+
+    private FlightPlan selectedPlan(FlightMode mode) {
+        return new FlightPlan(mode, FlightLevel.ofMeters(heightSeek == null ? 15 : heightSeek.getProgress()),
+            profileSpinner == null ? FlightProfile.STANDARD : (FlightProfile) profileSpinner.getSelectedItem(), selectedTargets);
+    }
+
+    private void renderFlightReadiness() {
+        if (flightReadinessText == null || runtime == null) return;
+        if (runtime.isActive()) {
+            flightReadinessText.setText("LET AI AKTIVNÍ • " + selectedTargets.label);
+            flightReadinessText.setTextColor(GREEN);
+            return;
+        }
+        SafetyDecision decision = runtime.preflight(selectedPlan(FlightMode.FOLLOW));
+        flightReadinessText.setText(decision.action == SafetyDecision.Action.ALLOW
+            ? "LET PŘIPRAVEN • " + selectedTargets.label + " • zvol režim"
+            : "LET BLOKOVÁN: " + decision.reason);
+        flightReadinessText.setTextColor(decision.action == SafetyDecision.Action.ALLOW ? GREEN : ORANGE);
     }
 
     private SeekBar.OnSeekBarChangeListener simpleSeek(Runnable changed) {

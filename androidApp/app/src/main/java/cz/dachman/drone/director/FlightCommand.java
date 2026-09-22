@@ -6,8 +6,8 @@ public final class FlightCommand {
     public static final FlightCommand ZERO = new FlightCommand(0f, 0f, 0f, 0f, 0f,
         NO_DIGITAL_ZOOM);
 
-    public final float pitch;
-    public final float roll;
+    public final float pitch; // Application forward velocity; mapped to SDK roll at the boundary.
+    public final float roll;  // Application right velocity; mapped to SDK pitch at the boundary.
     public final float yaw;
     public final float vertical;
     public final float gimbalPitch;
