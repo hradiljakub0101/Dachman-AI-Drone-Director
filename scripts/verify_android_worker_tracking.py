@@ -2,26 +2,30 @@
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
-checks = {
-    "signed positioning permission": (root / "androidApp/app/src/main/AndroidManifest.xml", 'protectionLevel="signature"'),
-    "position receiver": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/MainActivity.java", "ACTION_WORKER_POSITION"),
-    "hybrid controller": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/HybridFollowController.java", "Low-gain geographic feed-forward"),
-    "standoff guard": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/SafetySupervisor.java", "MINIMUM_WORKER_STANDOFF_METERS"),
-    "stale tag guard": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/WorkerPositionFix.java", "isFresh"),
-    "pilot override": (root / "androidApp/app/src/dji/java/cz/dachman/drone/director/DjiConnection.java", "postPilotOverride"),
-    "worker map markers": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/FlightMapView.java", "workerOneMarker"),
-    "roof and forbidden polygons": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/FlightMapView.java", "forbiddenPolygon"),
-    "appearance identity": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/AppearanceSignature.java", "upper clothing"),
-    "fusion state": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/FusionStatus.java", "FUSION_OK"),
-    "flight audit": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/FlightAuditLog.java", "flight-ai-audit.jsonl"),
-    "roof plane": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/SiteSafetyPlan.java", "roofHeightAt"),
-    "overflight guard": (root / "androidApp/app/src/main/java/cz/dachman/drone/director/SafetySupervisor.java", "Zakázaný přelet"),
+ui = (root / "androidApp/app/src/main/java/cz/dachman/drone/director/MainActivity.java").read_text(encoding="utf-8")
+flight = (root / "androidApp/app/src/main/java/cz/dachman/drone/director/FlightDirector.java").read_text(encoding="utf-8")
+safety = (root / "androidApp/app/src/main/java/cz/dachman/drone/director/SafetySupervisor.java").read_text(encoding="utf-8")
+map_view = (root / "androidApp/app/src/main/java/cz/dachman/drone/director/FlightMapView.java").read_text(encoding="utf-8")
+manifest = (root / "androidApp/app/src/main/AndroidManifest.xml").read_text(encoding="utf-8")
+
+required = {
+    "visual target selection": "VYBRAT WORKER 1" in ui and "VYBRAT WORKER 2" in ui,
+    "camera-centred flight input": "tracking.targetFor(plan.mode)" in flight,
+    "visual target safety gate": "requiresVisualTarget()" in safety,
+    "pilot override": "manualRearmRequired()" in ui,
+    "optional safety polygons": "forbiddenPolygon" in map_view,
+    "AI flight audit": "FlightAuditLog" in ui,
+}
+forbidden = {
+    "GPS/UWB tag UI": "POLOHOVÉ TAGY" in ui,
+    "worker position receiver": "ACTION_WORKER_POSITION" in ui,
+    "worker map markers": "workerOneMarker" in map_view or "workerTwoMarker" in map_view,
+    "worker tag permission": "WORKER_POSITION" in manifest,
+    "simulated trajectory preview": "FlightPathView" in ui,
 }
 
-failed = []
-for label, (path, needle) in checks.items():
-    if not path.is_file() or needle not in path.read_text(encoding="utf-8"):
-        failed.append(label)
+failed = [label for label, ok in required.items() if not ok]
+failed += [label for label, present in forbidden.items() if present]
 if failed:
-    raise SystemExit("Missing worker tracking integration: " + ", ".join(failed))
-print("Worker visual/GPS/UWB integration checks passed")
+    raise SystemExit("Visual tracking integration check failed: " + ", ".join(failed))
+print("Camera-only Worker tracking, optional polygons and UI removal checks passed")

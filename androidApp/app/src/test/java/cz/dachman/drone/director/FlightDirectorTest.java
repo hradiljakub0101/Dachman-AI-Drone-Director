@@ -49,6 +49,31 @@ public final class FlightDirectorTest {
         assertEquals(FlightLevel.MAXIMUM_METERS, FlightLevel.ofMeters(500).meters());
     }
 
+    @Test public void orbitAndSurveyMoveWithoutPolygon() {
+        TelemetrySnapshot positioned = positionedTelemetry(10f);
+        for (FlightMode mode : new FlightMode[]{FlightMode.SURVEY_MAP,
+                FlightMode.ORBIT_LEFT, FlightMode.ORBIT_RIGHT}) {
+            FlightPlan plan = new FlightPlan(mode, FlightLevel.WIDE, FlightProfile.STANDARD);
+            FlightDirector director = new FlightDirector();
+            director.begin(plan, positioned, TrackingSnapshot.empty(), SafetyConfiguration.defaults());
+            FlightCommand command = director.command(plan, positioned, TrackingSnapshot.empty(),
+                SafetyConfiguration.defaults());
+            assertTrue("Mode must issue a bounded local orbit: " + mode,
+                Math.abs(command.roll) > 0f && Math.abs(command.yaw) > 0f);
+        }
+    }
+
+    @Test public void pullAwayAndRevealIssuePhysicalBodyCommandsWithoutPolygon() {
+        for (FlightMode mode : new FlightMode[]{FlightMode.PULL_AWAY, FlightMode.REVEAL_UP}) {
+            FlightPlan plan = new FlightPlan(mode, FlightLevel.WIDE, FlightProfile.STANDARD);
+            FlightDirector director = new FlightDirector();
+            director.begin(plan, TrackingSnapshot.empty());
+            FlightCommand command = director.command(plan, telemetry(10f), TrackingSnapshot.empty());
+            assertTrue("Mode must command backward body velocity: " + mode, command.pitch < 0f);
+            assertTrue("Mode must command climb: " + mode, command.vertical > 0f);
+        }
+    }
+
     private static TrackingSnapshot tracking() {
         TargetBox target = new TargetBox(0.58f, 0.30f, 0.78f, 0.70f, 0.9f, NOW);
         return new TrackingSnapshot(Collections.singletonList(target), target, target, NOW);
@@ -57,5 +82,11 @@ public final class FlightDirectorTest {
     private static TelemetrySnapshot telemetry(float altitude) {
         return new TelemetrySnapshot(true, true, "DJI Mini 2", "GPS", 80, 14, altitude,
             0f, 0f, 90, true, true, false, false, "LEVEL_0");
+    }
+
+    private static TelemetrySnapshot positionedTelemetry(float altitude) {
+        return new TelemetrySnapshot(true, true, "DJI Mini 2", "GPS", 80, 14, altitude,
+            0f, 0f, 90, true, true, false, false, "LEVEL_0",
+            49.66812, 16.08961, 49.66812, 16.08961, 0f, true);
     }
 }

@@ -1,10 +1,7 @@
 package cz.dachman.drone.director;
 
 import android.app.Activity;
-import android.content.Context;
-import android.content.BroadcastReceiver;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
@@ -15,7 +12,6 @@ import android.hardware.biometrics.BiometricManager;
 import android.hardware.biometrics.BiometricPrompt;
 import android.hardware.usb.UsbManager;
 import android.os.Bundle;
-import android.os.Build;
 import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
@@ -27,7 +23,6 @@ import android.view.WindowManager;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
-import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.GridLayout;
 import android.widget.LinearLayout;
@@ -57,16 +52,12 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private static final int FRAME_HEIGHT = 216;
     private static final int CONTROL_DRAWER_DP = 360;
     private static final int MAP_DRAWER_DP = 390;
-    public static final String ACTION_WORKER_POSITION = "cz.dachman.drone.director.WORKER_POSITION";
-    public static final String WORKER_POSITION_PERMISSION =
-        "cz.dachman.drone.director.permission.WORKER_POSITION";
 
     private enum PendingKind { NONE, MODE, TAKEOFF, EMERGENCY_LANDING, RETURN_HOME, FULL_MISSION }
 
     private final ApprovalGate gate = new ApprovalGate();
     private final ControlAuthority authority = new ControlAuthority();
     private final HudPanelState hudPanels = new HudPanelState();
-    private final WorkerPositionRegistry workerPositions = new WorkerPositionRegistry();
     private final Handler main = new Handler(Looper.getMainLooper());
     private CancellationSignal authentication;
     private DjiConnection dji;
@@ -74,7 +65,6 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private FlightRuntime runtime;
     private TextureView video;
     private TrackingOverlay overlay;
-    private FlightPathView flightPath;
     private FlightMapView flightMap;
     private FlightRadarView flightRadar;
     private TextView videoPlaceholder;
@@ -84,11 +74,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private TextView statusText;
     private TextView aiText;
     private TextView targetText;
-    private TextView workerPositionText;
-    private TextView fusionText;
     private TextView safetyCalibrationText;
-    private EditText workerOneId;
-    private EditText workerTwoId;
     private TextView heightText;
     private TextView commandText;
     private TextView pendingText;
@@ -132,30 +118,11 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private float cameraZoomFactor = CameraDirector.MIN_DIGITAL_ZOOM;
     /** Guided mission: every composition still requires biometric approval and can be aborted by RC. */
     private boolean missionActive;
-    private boolean workerReceiverRegistered;
     private FlightAuditLog auditLog;
     private final List<SiteSafetyPlan.Point> roofBoundary = new ArrayList<>();
     private final List<SiteSafetyPlan.Point> forbiddenZone = new ArrayList<>();
     private volatile BuildingSpatialModel latestSpatialModel;
     private boolean standoffCalibrated;
-    private final BroadcastReceiver workerPositionReceiver = new BroadcastReceiver() {
-        @Override public void onReceive(Context context, Intent intent) {
-            if (intent == null || !ACTION_WORKER_POSITION.equals(intent.getAction())) return;
-            String id = intent.getStringExtra("worker_id");
-            double latitude = intent.getDoubleExtra("latitude", Double.NaN);
-            double longitude = intent.getDoubleExtra("longitude", Double.NaN);
-            float accuracy = intent.getFloatExtra("accuracy_meters", Float.NaN);
-            String sourceName = intent.getStringExtra("source");
-            WorkerPositionFix.Source source = "UWB_FUSED".equals(sourceName)
-                ? WorkerPositionFix.Source.UWB_FUSED : WorkerPositionFix.Source.PHONE_GNSS;
-            if (workerPositions.update(id, latitude, longitude, accuracy,
-                    System.nanoTime() / 1_000_000L, source)) {
-                publishWorkerPositions();
-            } else {
-                showStatus("Polohová zpráva pracovníka byla odmítnuta jako neplatná.");
-            }
-        }
-    };
     private int missionIndex;
     private final FlightMode[] missionModes = new FlightMode[] {
         FlightMode.FOLLOW, FlightMode.ORBIT_RIGHT, FlightMode.PULL_AWAY, FlightMode.REVEAL_UP
@@ -200,7 +167,6 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         dji = new DjiConnection(this);
         runtime = new FlightRuntime(dji, this);
         tracker = new WorkerTracker(this, this);
-        registerWorkerPositionReceiver();
         dji.setListener(this);
         if (video.isAvailable()) dji.attachVideo(video.getSurfaceTexture(), video.getWidth(), video.getHeight());
         if (!handleUsbIntent(getIntent())) dji.connect();
@@ -347,20 +313,14 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             publishSafetyConfiguration();
         });
 
-        flightPath = new FlightPathView(this);
-        flightPath.setAlpha(0.90f);
-        flightPath.setBackground(card(Color.argb(105, 5, 17, 24), 10, CYAN));
-
         mapDrawer = new FrameLayout(this);
         mapDrawer.setPadding(dp(7), dp(7), dp(7), dp(7));
         mapDrawer.setBackground(card(Color.argb(125, 5, 17, 24), 12, Color.argb(170, 36, 211, 195)));
         LinearLayout mapDrawerContent = row();
-        LinearLayout.LayoutParams mapItemParams = new LinearLayout.LayoutParams(0,
-            ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+        LinearLayout.LayoutParams mapItemParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
         mapItemParams.setMargins(dp(3), dp(3), dp(3), dp(3));
         mapDrawerContent.addView(flightMap, mapItemParams);
-        mapDrawerContent.addView(flightPath, new LinearLayout.LayoutParams(0,
-            ViewGroup.LayoutParams.MATCH_PARENT, 1f));
         mapDrawer.addView(mapDrawerContent, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         FrameLayout.LayoutParams mapDrawerParams = new FrameLayout.LayoutParams(
@@ -396,7 +356,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         statePanel.addView(aircraftActionText);
         controls.addView(statePanel);
 
-        section(controls, "VOLITELNÉ OZNAČENÍ OSOB – NEŘÍDÍ LET");
+        section(controls, "OBRAZOVÉ SLEDOVÁNÍ OSOB");
         aiText = text("AI MODEL SE NAČÍTÁ…", 10, MUTED, true);
         targetText = text("Worker 1: —   Worker 2: —", 10, Color.WHITE, false);
         controls.addView(aiText);
@@ -409,33 +369,10 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         controls.addView(workerRow);
         Button clearWorkers = button("ZRUŠIT VÝBĚR PRACOVNÍKŮ", PANEL_LIGHT, () -> {
             tracker.clearSelections();
-            workerPositions.clear();
-            publishWorkerPositions();
-            invalidatePending("Volitelné označení osob zrušeno; zvolený mapový let pokračuje.");
+            invalidatePending("Obrazový výběr osob byl zrušen.");
         });
         controls.addView(clearWorkers, fullButtonParams());
         selectWorkerSlot(1);
-
-        section(controls, "POLOHOVÉ TAGY – VOLITELNÁ HYBRIDNÍ OCHRANA");
-        workerPositionText = text("GPS/UWB: bez spárovaných tagů", 9, MUTED, true);
-        controls.addView(workerPositionText);
-        fusionText = text("HOLD • čekám na obraz a tag", 10, ORANGE, true);
-        controls.addView(fusionText);
-        workerOneId = workerIdInput("ID tagu Worker 1");
-        controls.addView(workerOneId);
-        controls.addView(button("SPÁROVAT TAG S WORKER 1", GREEN,
-            () -> bindWorkerPosition(1, workerOneId.getText().toString())), fullButtonParams());
-        workerTwoId = workerIdInput("ID tagu Worker 2");
-        controls.addView(workerTwoId);
-        controls.addView(button("SPÁROVAT TAG S WORKER 2", ORANGE,
-            () -> bindWorkerPosition(2, workerTwoId.getText().toString())), fullButtonParams());
-        controls.addView(button("ODPOJIT POLOHOVÉ TAGY", PANEL_LIGHT, () -> {
-            workerPositions.clear();
-            publishWorkerPositions();
-            showStatus("Polohové tagy odpojeny; zůstává pouze obrazové sledování.");
-        }), fullButtonParams());
-        controls.addView(text("Tagy slouží jen jako informační vrstva; jejich ztráta nezastaví mapově řízený let.",
-            8, MUTED, false));
 
         section(controls, "KALIBRACE ODSTUPU A PROSTOR STŘECHY");
         safetyCalibrationText = text("ODSTUP NENÍ KALIBROVÁN • výchozí šest metrů", 9, ORANGE, true);
@@ -447,8 +384,6 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             standoffCalibrated = true; publishSafetyConfiguration();
         }));
         controls.addView(standoffSeek);
-        controls.addView(button("KALIBROVAT Z AKTUÁLNÍ POLOHY", ORANGE,
-            this::calibrateCurrentStandoff), fullButtonParams());
         LinearLayout mapEditRow = row();
         mapEditRow.addView(button("KRESLIT STŘECHU", GREEN,
             () -> flightMap.setEditorMode(FlightMapView.EditorMode.ROOF)), weightedButtonParams());
@@ -462,7 +397,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         roofHeightSeek = safetySeek(0, 50, 0, GREEN, controls, "VÝŠKA OKAPU NAD STARTEM");
         roofSlopeSeek = safetySeek(0, 60, 0, GREEN, controls, "SKLON STŘECHY");
         roofBearingSeek = safetySeek(0, 359, 0, GREEN, controls, "SMĚR SPÁDU");
-        controls.addView(text("Dlouhým stiskem do mapy přidávej body zvoleného polygonu.", 8, MUTED, false));
+        controls.addView(text("Polygon je volitelný. Po volbě vrstvy přidávej body běžným klepnutím do mapy.",
+            8, MUTED, false));
 
         section(controls, "LETOVÝ PROTOKOL AI");
         controls.addView(text("Rozhodnutí, stav fúze a povely se ukládají do flight-ai-audit.jsonl.",
@@ -686,7 +622,13 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             showStatus("Pilot převzal řízení. Nejdřív stiskni RUČNĚ PŘIPRAVIT AI ZNOVU.");
             return;
         }
-        if (!mapPlanReady(mode)) return;
+        if (mode.requiresVisualTarget() && (tracker == null
+                || !tracker.snapshot().hasRequiredTargets(mode))) {
+            showStatus(mode == FlightMode.DUO_FOLLOW
+                ? "Nejprve v obrazu vyber Worker 1 a Worker 2."
+                : "Nejprve v obrazu vyber sledovanou osobu.");
+            return;
+        }
         authority.targetConfirmed(true);
         updateAuthorityUi();
         if (runtime.isActive()) runtime.hold("Změna manévru – HOLD");
@@ -695,9 +637,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         pendingPlan = new FlightPlan(mode, FlightLevel.ofMeters(heightSeek.getProgress()), profile);
         pendingKind = PendingKind.MODE;
         gate.request(pendingPlan.approvalText());
-        flightPath.setPlan(pendingPlan);
-        pendingText.setText("NÁHLED TRAJEKTORIE\n" + pendingPlan.approvalText()
-            + "\nKamera AI: predikční centrování gimbalu a automatický zoom.");
+        pendingText.setText(pendingPlan.approvalText()
+            + "\nKamera AI: centrování cíle, gimbal a podporovaný zoom.");
         readinessCheck.setVisibility(View.GONE);
         readinessCheck.setChecked(false);
         approvalCard.setVisibility(View.GONE);
@@ -721,8 +662,6 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         pendingText.setText(description);
         readinessCheck.setVisibility(View.GONE);
         approvalCard.setVisibility(View.GONE);
-        flightPath.setPlan(new FlightPlan(FlightMode.HOLD,
-            FlightLevel.ofMeters(heightSeek.getProgress()), (FlightProfile)profileSpinner.getSelectedItem()));
         showStatus("Zkontroluj prostor a potvrď akci jedním systémovým ověřením.");
         authenticate();
     }
@@ -732,14 +671,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             showStatus("Pilot převzal řízení. Nejdřív stiskni RUČNĚ PŘIPRAVIT AI ZNOVU.");
             return;
         }
-        if (roofBoundary.size() < 3) {
-            revealMapDrawer();
-            showStatus("Pro autonomní misi zakresli do satelitní mapy pracovní zónu alespoň třemi body.");
-            return;
-        }
-        if (latestSpatialModel == null || !latestSpatialModel.ready()) {
-            revealMapDrawer();
-            showStatus("Před autonomní misí dokonči MAPOVACÍ OBLET budovy.");
+        if (tracker == null || !tracker.snapshot().hasRequiredTargets(FlightMode.FOLLOW)) {
+            showStatus("Před misí vyber sledovanou osobu v živém obrazu.");
             return;
         }
         authority.targetConfirmed(true);
@@ -747,13 +680,11 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         if (runtime != null && runtime.isActive()) runtime.abort("Příprava mise – HOLD");
         invalidatePending(null);
         pendingKind = PendingKind.FULL_MISSION;
-        gate.request("AUTONOMNÍ MISE: vzlet, čtyři mapově řízené kompozice a návrat domů");
-        pendingText.setText("AUTONOMNÍ MISE\nVzlet → čtyři mapově řízené kompozice → RTH.");
+        gate.request("AUTONOMNÍ MISE: vzlet, čtyři obrazově řízené kompozice a návrat domů");
+        pendingText.setText("AUTONOMNÍ MISE\nVzlet → čtyři obrazově řízené kompozice → RTH.");
         pendingText.append("\nKamera AI průběžně řídí náklon a digitální zoom.");
         readinessCheck.setVisibility(View.GONE);
         approvalCard.setVisibility(View.GONE);
-        flightPath.setPlan(new FlightPlan(FlightMode.FOLLOW,
-            FlightLevel.ofMeters(heightSeek.getProgress()), (FlightProfile)profileSpinner.getSelectedItem()));
         showStatus("Zkontroluj prostor, Home Point a přímý dohled; potom proveď jedno ověření.");
         authenticate();
     }
@@ -765,24 +696,6 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         }
         updateAuthorityUi();
         showStatus("AI je znovu připravena. Každý další manévr musíš ručně potvrdit.");
-    }
-
-    private boolean mapPlanReady(FlightMode mode) {
-        int required = mode.requiresMapOrbitCenter() ? 3 : mode.requiresMapRoute() ? 2 : 0;
-        if (roofBoundary.size() >= required) {
-            if (mode != FlightMode.SURVEY_MAP && (mode.requiresMapRoute() || mode.requiresMapOrbitCenter())
-                    && (latestSpatialModel == null || !latestSpatialModel.ready())) {
-                revealMapDrawer();
-                showStatus("Nejprve dokonči MAPOVACÍ OBLET a ověř prostorový model budovy.");
-                return false;
-            }
-            return true;
-        }
-        revealMapDrawer();
-        showStatus(mode.requiresMapOrbitCenter()
-            ? "Pro ORBIT zakresli do satelitní mapy pracovní zónu alespoň třemi body."
-            : "Pro tento režim zakresli do satelitní mapy alespoň dva body trasy.");
-        return false;
     }
 
     private void authenticate() {
@@ -992,7 +905,6 @@ public final class MainActivity extends Activity implements DroneSession.Listene
                 value.horizontalSpeedMetersPerSecond, position));
             if (flightMap != null) flightMap.updateTelemetry(value);
             if (flightRadar != null) flightRadar.updateTelemetry(value);
-            updateFusionUi();
         });
     }
 
@@ -1129,7 +1041,6 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             targetText.setText("Worker 1: " + targetLabel(snapshot.primary)
                 + "   Worker 2: " + targetLabel(snapshot.secondary)
                 + "   Osoby: " + snapshot.candidates.size());
-            updateFusionUi();
         });
     }
 
@@ -1164,7 +1075,6 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             renderCameraDirectorUi();
             FusionStatus fusion = currentFusionStatus();
             if (auditLog != null) auditLog.append(active ? "AI_COMMAND" : "AI_STATE", message, fusion, command);
-            updateFusionUi();
         });
     }
 
@@ -1237,65 +1147,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         if (tracker != null) tracker.close();
         if (runtime != null) runtime.close();
         if (dji != null) dji.close();
-        if (workerReceiverRegistered) {
-            unregisterReceiver(workerPositionReceiver);
-            workerReceiverRegistered = false;
-        }
         super.onDestroy();
-    }
-
-    private void registerWorkerPositionReceiver() {
-        IntentFilter filter = new IntentFilter(ACTION_WORKER_POSITION);
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(workerPositionReceiver, filter, WORKER_POSITION_PERMISSION, main,
-                Context.RECEIVER_EXPORTED);
-        } else {
-            registerReceiver(workerPositionReceiver, filter, WORKER_POSITION_PERMISSION, main);
-        }
-        workerReceiverRegistered = true;
-    }
-
-    private void bindWorkerPosition(int slot, String id) {
-        if (!workerPositions.bind(slot, id)) {
-            showStatus("Tag není přijatý, neexistuje nebo je už přiřazen druhému pracovníkovi.");
-            return;
-        }
-        publishWorkerPositions();
-        showStatus("Polohový tag byl bezpečně spárován s Worker " + slot + ".");
-    }
-
-    private void publishWorkerPositions() {
-        WorkerGeoSnapshot geo = workerPositions.snapshot();
-        if (runtime != null) runtime.updateWorkerGeo(geo);
-        ui(() -> {
-            if (workerPositionText == null) return;
-            String first = geo.primaryId.isEmpty() ? "—" : geo.primaryId
-                + (geo.primary == null ? " čeká" : " " + Math.round(geo.primary.accuracyMeters) + " m");
-            String second = geo.secondaryId.isEmpty() ? "—" : geo.secondaryId
-                + (geo.secondary == null ? " čeká" : " " + Math.round(geo.secondary.accuracyMeters) + " m");
-            workerPositionText.setText("GPS/UWB • W1 " + first + " • W2 " + second);
-            workerPositionText.setTextColor(geo.hasAnyBinding() ? GREEN : MUTED);
-            if (flightMap != null) flightMap.updateWorkers(geo);
-            updateFusionUi();
-        });
-    }
-
-    private void calibrateCurrentStandoff() {
-        WorkerPositionFix worker = workerPositions.snapshot().primary;
-        if (worker == null || !worker.isStructurallyValid() || !telemetry.hasAircraftLocation()) {
-            showStatus("Kalibrace vyžaduje platný tag Worker 1 a GPS polohu dronu.");
-            return;
-        }
-        double distance = HybridFollowController.distanceMeters(telemetry.aircraftLatitude,
-            telemetry.aircraftLongitude, worker.latitude, worker.longitude);
-        if (distance < 6d || distance > 30d) {
-            showStatus("Kalibrační vzdálenost musí být mezi šesti a třiceti metry.");
-            return;
-        }
-        standoffSeek.setProgress((int)Math.round(distance));
-        standoffCalibrated = true;
-        publishSafetyConfiguration();
-        showStatus("Bezpečnostní odstup byl kalibrován z aktuální polohy dronu.");
     }
 
     private void publishSafetyConfiguration() {
@@ -1318,28 +1170,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     private FusionStatus currentFusionStatus() {
         TrackingSnapshot tracking = tracker == null ? TrackingSnapshot.empty() : tracker.snapshot();
-        WorkerGeoSnapshot geo = workerPositions.snapshot();
-        FlightMode mode = tracking.secondary != null ? FlightMode.DUO_FOLLOW : FlightMode.FOLLOW;
-        return FusionStatus.evaluate(mode, tracking, geo, System.nanoTime() / 1_000_000L);
-    }
-
-    private void updateFusionUi() {
-        if (fusionText == null) return;
-        FusionStatus fusion = currentFusionStatus();
-        fusionText.setText(fusion.label);
-        fusionText.setTextColor(fusion == FusionStatus.FUSION_OK ? GREEN
-            : fusion == FusionStatus.IMAGE_OK || fusion == FusionStatus.TAG_OK ? ORANGE : RED);
-    }
-
-    private EditText workerIdInput(String hint) {
-        EditText input = new EditText(this);
-        input.setHint(hint);
-        input.setSingleLine(true);
-        input.setTextColor(Color.WHITE);
-        input.setHintTextColor(MUTED);
-        input.setTextSize(10);
-        input.setBackgroundTintList(ColorStateList.valueOf(CYAN));
-        return input;
+        return tracking.primary != null ? FusionStatus.IMAGE_OK : FusionStatus.HOLD;
     }
 
     private SeekBar.OnSeekBarChangeListener simpleSeek(Runnable changed) {

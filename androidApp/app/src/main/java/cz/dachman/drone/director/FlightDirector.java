@@ -5,24 +5,17 @@ public final class FlightDirector {
     private float referenceTargetHeight = 0.3f;
     private FlightCommand previous = FlightCommand.ZERO;
     private final CameraDirector cameraDirector = new CameraDirector();
-    private final HybridFollowController hybridFollow = new HybridFollowController();
     private int routeIndex;
     private double orbitRadiusMeters = 8d;
 
     public void begin(FlightPlan plan, TrackingSnapshot tracking) {
-        begin(plan, TelemetrySnapshot.disconnected(), tracking, WorkerGeoSnapshot.empty());
+        begin(plan, TelemetrySnapshot.disconnected(), tracking, SafetyConfiguration.defaults());
     }
 
     public void begin(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking,
-            WorkerGeoSnapshot geo) {
-        begin(plan, telemetry, tracking, geo, SafetyConfiguration.defaults());
-    }
-
-    public void begin(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking,
-            WorkerGeoSnapshot geo, SafetyConfiguration safetyConfiguration) {
-        TargetBox target = null; // Person boxes are an optional HUD layer, never a flight dependency.
+            SafetyConfiguration safetyConfiguration) {
+        TargetBox target = tracking == null ? null : tracking.targetFor(plan.mode);
         cameraDirector.begin(plan, tracking);
-        hybridFollow.begin(telemetry, geo == null ? null : geo.targetFor(plan.mode));
         float zoom = Math.max(CameraDirector.MIN_DIGITAL_ZOOM, cameraDirector.appliedZoomFactor());
         referenceTargetHeight = target == null ? 0.3f : Math.max(0.08f, target.height() / zoom);
         previous = FlightCommand.ZERO;
@@ -30,22 +23,17 @@ public final class FlightDirector {
         SiteSafetyPlan site = safetyConfiguration == null ? SiteSafetyPlan.empty() : safetyConfiguration.site;
         SiteSafetyPlan.Point center = centroid(site.roofBoundary);
         if (center != null && telemetry.hasAircraftLocation()) orbitRadiusMeters = Math.max(5d,
-            HybridFollowController.distanceMeters(telemetry.aircraftLatitude, telemetry.aircraftLongitude,
+            distanceMeters(telemetry.aircraftLatitude, telemetry.aircraftLongitude,
                 center.latitude, center.longitude));
     }
 
     public FlightCommand command(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking) {
-        return command(plan, telemetry, tracking, WorkerGeoSnapshot.empty());
+        return command(plan, telemetry, tracking, SafetyConfiguration.defaults());
     }
 
     public FlightCommand command(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking,
-            WorkerGeoSnapshot geo) {
-        return command(plan, telemetry, tracking, geo, SafetyConfiguration.defaults());
-    }
-
-    public FlightCommand command(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking,
-            WorkerGeoSnapshot geo, SafetyConfiguration safetyConfiguration) {
-        TargetBox target = null; // All autonomous translation comes from the reviewed map plan.
+            SafetyConfiguration safetyConfiguration) {
+        TargetBox target = tracking == null ? null : tracking.targetFor(plan.mode);
         if (target == null) return smoothMapCommand(plan, telemetry, safetyConfiguration);
 
         FlightProfile profile = plan.profile;
@@ -104,9 +92,6 @@ public final class FlightDirector {
         if (telemetry.altitudeMeters >= plan.level.maximumAltitudeMeters && vertical > 0f) vertical = 0f;
         FlightCommand requested = new FlightCommand(pitch, roll, yaw, vertical,
             camera.gimbalPitch, camera.digitalZoomFactor);
-        if (geo != null && geo.requiredReliable(plan.mode, System.nanoTime() / 1_000_000L)) {
-            requested = hybridFollow.blend(requested, profile, telemetry, geo.targetFor(plan.mode));
-        }
         previous = smooth(previous, requested, 0.22f);
         return previous;
     }
@@ -118,7 +103,6 @@ public final class FlightDirector {
     public void reset() {
         previous = FlightCommand.ZERO;
         cameraDirector.resetMotion();
-        hybridFollow.reset();
         routeIndex = 0;
     }
 
@@ -127,9 +111,11 @@ public final class FlightDirector {
         FlightProfile profile = plan.profile;
         SiteSafetyPlan site = configuration == null ? SiteSafetyPlan.empty() : configuration.site;
         float pitch = 0f, roll = 0f, yaw = 0f, vertical = 0f, gimbal = 0f;
-        if (plan.mode.requiresMapRoute() && telemetry.hasAircraftLocation() && site.roofBoundary.size() >= 2) {
+        if ((plan.mode == FlightMode.FOLLOW || plan.mode == FlightMode.DUO_FOLLOW
+                || plan.mode == FlightMode.ROPE_MODE)
+                && telemetry.hasAircraftLocation() && site.roofBoundary.size() >= 2) {
             SiteSafetyPlan.Point waypoint = site.roofBoundary.get(routeIndex % site.roofBoundary.size());
-            double distance = HybridFollowController.distanceMeters(telemetry.aircraftLatitude,
+            double distance = distanceMeters(telemetry.aircraftLatitude,
                 telemetry.aircraftLongitude, waypoint.latitude, waypoint.longitude);
             if (distance < 2.5d) {
                 routeIndex = (routeIndex + 1) % site.roofBoundary.size();
@@ -140,7 +126,8 @@ public final class FlightDirector {
             float[] body = bodyVelocityTo(telemetry, waypoint, profile.maxHorizontalMetersPerSecond * scale);
             pitch = body[0]; roll = body[1]; yaw = body[2];
             gimbal = plan.mode == FlightMode.ROPE_MODE ? -8f : 0f;
-        } else if (plan.mode.requiresMapOrbitCenter() && telemetry.hasAircraftLocation()) {
+        } else if ((plan.mode == FlightMode.SURVEY_MAP || plan.mode == FlightMode.ORBIT_LEFT
+                || plan.mode == FlightMode.ORBIT_RIGHT) && telemetry.hasAircraftLocation()) {
             SiteSafetyPlan.Point center = centroid(site.roofBoundary);
             if (center != null) {
                 float[] orbit = orbitVelocity(telemetry, center, profile,
@@ -149,6 +136,12 @@ public final class FlightDirector {
                 if (plan.mode == FlightMode.SURVEY_MAP) {
                     pitch *= 0.45f; roll *= 0.45f; yaw *= 0.55f; gimbal = -12f;
                 }
+            } else {
+                // Polygon is optional: fly a bounded local orbit while the pilot keeps visual control.
+                float direction = plan.mode == FlightMode.ORBIT_LEFT ? -1f : 1f;
+                roll = direction * profile.maxHorizontalMetersPerSecond * 0.45f;
+                yaw = direction * profile.maxYawDegreesPerSecond * 0.35f;
+                if (plan.mode == FlightMode.SURVEY_MAP) { roll *= 0.55f; yaw *= 0.55f; gimbal = -12f; }
             }
         } else if (plan.mode == FlightMode.PULL_AWAY) {
             pitch = -profile.maxHorizontalMetersPerSecond * 0.70f;
@@ -206,6 +199,14 @@ public final class FlightDirector {
         double latitude = 0d, longitude = 0d;
         for (SiteSafetyPlan.Point point : points) { latitude += point.latitude; longitude += point.longitude; }
         return new SiteSafetyPlan.Point(latitude / points.size(), longitude / points.size());
+    }
+
+    private static double distanceMeters(double latitudeA, double longitudeA,
+            double latitudeB, double longitudeB) {
+        double north = Math.toRadians(latitudeB - latitudeA) * 6_371_000d;
+        double east = Math.toRadians(longitudeB - longitudeA) * 6_371_000d
+            * Math.cos(Math.toRadians((latitudeA + latitudeB) * 0.5d));
+        return Math.hypot(north, east);
     }
 
     private static float normalize180(float value) {

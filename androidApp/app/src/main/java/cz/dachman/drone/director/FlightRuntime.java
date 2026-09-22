@@ -18,7 +18,6 @@ public final class FlightRuntime {
     private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor();
     private volatile TelemetrySnapshot telemetry = TelemetrySnapshot.disconnected();
     private volatile TrackingSnapshot tracking = TrackingSnapshot.empty();
-    private volatile WorkerGeoSnapshot workerGeo = WorkerGeoSnapshot.empty();
     private volatile SafetyConfiguration safetyConfiguration = SafetyConfiguration.defaults();
     private volatile boolean active;
     private volatile FlightPlan plan;
@@ -39,9 +38,6 @@ public final class FlightRuntime {
 
     public void updateTelemetry(TelemetrySnapshot telemetry) { this.telemetry = telemetry; }
     public void updateTracking(TrackingSnapshot tracking) { this.tracking = tracking; }
-    public void updateWorkerGeo(WorkerGeoSnapshot workerGeo) {
-        this.workerGeo = workerGeo == null ? WorkerGeoSnapshot.empty() : workerGeo;
-    }
     public void updateSafetyConfiguration(SafetyConfiguration configuration) {
         safetyConfiguration = configuration == null ? SafetyConfiguration.defaults() : configuration;
     }
@@ -52,7 +48,7 @@ public final class FlightRuntime {
     public BuildingSpatialModel spatialModel() { return spatialModel; }
 
     public SafetyDecision preflight(FlightPlan candidate) {
-        return safety.evaluate(candidate, telemetry, tracking, workerGeo, safetyConfiguration, now(), now());
+        return safety.evaluate(candidate, telemetry, tracking, safetyConfiguration, now(), now());
     }
 
     public synchronized void start(FlightPlan candidate, DroneSession.Completion completion) {
@@ -64,7 +60,7 @@ public final class FlightRuntime {
             return;
         }
         final long challenge = ++revision;
-        director.begin(candidate, telemetry, tracking, workerGeo, safetyConfiguration);
+        director.begin(candidate, telemetry, tracking, safetyConfiguration);
         if (candidate.mode == FlightMode.SURVEY_MAP) {
             surveyBuilder = new BuildingSpatialModel.Builder(safetyConfiguration.site.roofBoundary);
         }
@@ -92,7 +88,7 @@ public final class FlightRuntime {
         FlightPlan current = plan;
         if (!active || current == null) return;
         long now = now();
-        SafetyDecision decision = safety.evaluate(current, telemetry, tracking, workerGeo,
+        SafetyDecision decision = safety.evaluate(current, telemetry, tracking,
             safetyConfiguration, now, startedAt);
         if (decision.action == SafetyDecision.Action.STOP) {
             stop(decision.reason);
@@ -110,7 +106,7 @@ public final class FlightRuntime {
             return;
         }
         holdSince = 0L;
-        FlightCommand command = director.command(current, telemetry, tracking, workerGeo, safetyConfiguration);
+        FlightCommand command = director.command(current, telemetry, tracking, safetyConfiguration);
         if (current.mode == FlightMode.SURVEY_MAP && surveyBuilder != null) {
             surveyBuilder.observe(telemetry);
             BuildingSpatialModel next = surveyBuilder.snapshot(now);

@@ -41,7 +41,7 @@ jobs:
         run: python3 scripts/verify_android_recording_integration.py
       - name: Verify Home Point and automatic RTH integration
         run: python3 scripts/verify_android_rth_integration.py
-      - name: Verify hybrid Worker tracking and safety corridor
+      - name: Verify camera-only Worker tracking and optional map polygons
         run: python3 scripts/verify_android_worker_tracking.py
       - name: Test and build demo and DJI debug APKs
         working-directory: androidApp

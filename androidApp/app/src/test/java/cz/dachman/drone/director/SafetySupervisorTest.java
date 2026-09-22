@@ -11,38 +11,38 @@ public final class SafetySupervisorTest {
 
     @Test public void allowsHealthyFollow() {
         SafetyDecision decision = safety.evaluate(plan(FlightMode.FOLLOW), healthyTelemetry(),
-            tracking(NOW, true), WorkerGeoSnapshot.empty(), configuration(), NOW, NOW - 1_000L);
+            tracking(NOW, true), configuration(), NOW, NOW - 1_000L);
         assertEquals(SafetyDecision.Action.ALLOW, decision.action);
     }
 
-    @Test public void targetLossDoesNotStopMapDirectedFlight() {
+    @Test public void targetLossHoldsThenStopsVisualFollow() {
         SafetyDecision hold = safety.evaluate(plan(FlightMode.FOLLOW), healthyTelemetry(),
-            tracking(NOW - 1_000L, true), WorkerGeoSnapshot.empty(), configuration(), NOW, NOW - 1_000L);
+            tracking(NOW - 1_000L, true), configuration(), NOW, NOW - 1_000L);
         SafetyDecision stop = safety.evaluate(plan(FlightMode.FOLLOW), healthyTelemetry(),
-            tracking(NOW - 2_500L, true), WorkerGeoSnapshot.empty(), configuration(), NOW, NOW - 1_000L);
-        assertEquals(SafetyDecision.Action.ALLOW, hold.action);
-        assertEquals(SafetyDecision.Action.ALLOW, stop.action);
+            tracking(NOW - 2_500L, true), configuration(), NOW, NOW - 1_000L);
+        assertEquals(SafetyDecision.Action.HOLD, hold.action);
+        assertEquals(SafetyDecision.Action.STOP, stop.action);
     }
 
-    @Test public void groupModeDoesNotRequireTwoWorkers() {
+    @Test public void groupModeRequiresTwoVisualTargets() {
         SafetyDecision decision = safety.evaluate(plan(FlightMode.DUO_FOLLOW), healthyTelemetry(),
-            tracking(NOW, false), WorkerGeoSnapshot.empty(), configuration(), NOW, NOW - 1_000L);
-        assertEquals(SafetyDecision.Action.ALLOW, decision.action);
+            tracking(NOW, false), configuration(), NOW, NOW - 1_000L);
+        assertEquals(SafetyDecision.Action.HOLD, decision.action);
     }
 
     @Test public void lowBatteryAndStrongWindStopFlight() {
         TelemetrySnapshot lowBattery = telemetry(20, 10f, "LEVEL_0");
         TelemetrySnapshot strongWind = telemetry(80, 10f, "LEVEL_2");
         assertEquals(SafetyDecision.Action.STOP, safety.evaluate(plan(FlightMode.FOLLOW),
-            lowBattery, tracking(NOW, true), WorkerGeoSnapshot.empty(), configuration(), NOW, NOW).action);
+            lowBattery, tracking(NOW, true), configuration(), NOW, NOW).action);
         assertEquals(SafetyDecision.Action.STOP, safety.evaluate(plan(FlightMode.FOLLOW),
-            strongWind, tracking(NOW, true), WorkerGeoSnapshot.empty(), configuration(), NOW, NOW).action);
+            strongWind, tracking(NOW, true), configuration(), NOW, NOW).action);
     }
 
     @Test public void selectedHeightCeilingIsEnforced() {
         FlightPlan lowCeiling = new FlightPlan(FlightMode.FOLLOW, FlightLevel.ofMeters(8), FlightProfile.PRECISE);
         assertEquals(SafetyDecision.Action.STOP, safety.evaluate(lowCeiling, telemetry(80, 9f, "LEVEL_0"),
-            tracking(NOW, true), WorkerGeoSnapshot.empty(), configuration(), NOW, NOW).action);
+            tracking(NOW, true), configuration(), NOW, NOW).action);
     }
 
     private static FlightPlan plan(FlightMode mode) {

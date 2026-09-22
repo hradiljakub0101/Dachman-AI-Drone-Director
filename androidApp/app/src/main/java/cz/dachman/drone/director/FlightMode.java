@@ -28,10 +28,15 @@ public enum FlightMode {
     @Override public String toString() { return label; }
 
     public boolean requiresMapRoute() {
-        return this == FOLLOW || this == DUO_FOLLOW || this == ROPE_MODE;
+        return false;
     }
 
     public boolean requiresMapOrbitCenter() {
-        return this == SURVEY_MAP || this == ORBIT_LEFT || this == ORBIT_RIGHT;
+        return false;
+    }
+
+    /** Camera target is mandatory only for modes that explicitly follow people. */
+    public boolean requiresVisualTarget() {
+        return this == STATIC_TRACK || this == FOLLOW || this == DUO_FOLLOW || this == ROPE_MODE;
     }
 }
