@@ -63,6 +63,8 @@ final class DjiConnection implements DroneSession {
     private static final long VIDEO_STALE_MILLIS = 5_000L;
     private static final int MAX_VIDEO_RESTARTS = 3;
     private static final int AUTOMATIC_RTH_BATTERY_PERCENT = 25;
+    private static final float MAXIMUM_DEVICE_HOME_ACCURACY_METERS = 15f;
+    private long lastVirtualStickErrorAt;
 
     private enum AircraftAction {
         NONE("ŽÁDNÁ"), TAKEOFF("AUTONOMNÍ VZLET"), LANDING("AUTONOMNÍ PŘISTÁNÍ"), RETURN_HOME("NÁVRAT DOMŮ");
@@ -635,10 +637,10 @@ final class DjiConnection implements DroneSession {
         current.setRollPitchCoordinateSystem(FlightCoordinateSystem.BODY);
         current.setYawControlMode(YawControlMode.ANGULAR_VELOCITY);
         current.setVerticalControlMode(VerticalControlMode.VELOCITY);
-        current.setVirtualStickAdvancedModeEnabled(true);
         current.setVirtualStickModeEnabled(true, error -> {
             boolean success = error == null;
             virtualStickEnabled = success;
+            if (success) current.setVirtualStickAdvancedModeEnabled(true);
             postCompletion(completion, success,
                 success ? "Supervised řízení je aktivní." : "Virtual Stick nelze zapnout: " + errorText(error));
         });
@@ -648,7 +650,13 @@ final class DjiConnection implements DroneSession {
         FlightController current = flightController;
         if (!virtualStickEnabled || current == null || command == null) return;
         current.sendVirtualStickFlightControlData(
-            new FlightControlData(command.pitch, command.roll, command.yaw, command.vertical), null);
+            new FlightControlData(command.pitch, command.roll, command.yaw, command.vertical), error -> {
+                if (error == null) return;
+                long now = android.os.SystemClock.elapsedRealtime();
+                if (now - lastVirtualStickErrorAt < 2_000L) return;
+                lastVirtualStickErrorAt = now;
+                postStatus("DJI odmítlo pohybový povel Virtual Stick: " + errorText(error));
+            });
         long now = android.os.SystemClock.elapsedRealtime();
         if (now - lastGimbalAt >= GIMBAL_INTERVAL_MILLIS) {
             lastGimbalAt = now;
@@ -786,6 +794,62 @@ final class DjiConnection implements DroneSession {
                 @Override public void onFailure(DJIError error) {
                     failReturnHomePreparation(completion,
                         "Uložený Home Point nelze zpětně načíst: " + errorText(error));
+                }
+            });
+        });
+    }
+
+    @Override public void prepareReturnHomeFromDevice(double latitude, double longitude,
+            float accuracyMeters, int heightMeters, Completion completion) {
+        FlightController current = flightController;
+        FlightControllerState state = lastFlightState;
+        if (!supportsLiveControl() || current == null || state == null) {
+            postCompletion(completion, false, "Mini 2, RC-N1 a živá telemetrie nejsou připravené.");
+            return;
+        }
+        if (state.areMotorsOn() || state.isFlying()) {
+            postCompletion(completion, false, "Návratový bod lze uložit pouze před spuštěním motorů.");
+            return;
+        }
+        if (!validCoordinate(latitude, longitude) || !Float.isFinite(accuracyMeters)
+                || accuracyMeters > MAXIMUM_DEVICE_HOME_ACCURACY_METERS) {
+            postCompletion(completion, false,
+                "Poloha telefonu není dostatečně přesná; požadována je přesnost do patnácti metrů.");
+            return;
+        }
+        if (heightMeters < 20 || heightMeters > 500) {
+            postCompletion(completion, false, "RTH výška musí být mezi dvaceti a pěti sty metry.");
+            return;
+        }
+        returnHomeStatus = ReturnHomeStatus.configuring();
+        postReturnHomeStatus();
+        LocationCoordinate2D requested = new LocationCoordinate2D(latitude, longitude);
+        current.setHomeLocation(requested, error -> {
+            if (error != null) {
+                failReturnHomePreparation(completion,
+                    "DJI nepřijalo Home Point z telefonu: " + errorText(error));
+                return;
+            }
+            current.getHomeLocation(new CommonCallbacks.CompletionCallbackWith<LocationCoordinate2D>() {
+                @Override public void onSuccess(LocationCoordinate2D home) {
+                    if (home == null) {
+                        failReturnHomePreparation(completion, "Home Point z telefonu nelze zpětně načíst.");
+                        return;
+                    }
+                    double verificationError = ReturnHomeStatus.distanceMeters(latitude, longitude,
+                        home.getLatitude(), home.getLongitude());
+                    if (Double.isNaN(verificationError)
+                            || verificationError > ReturnHomeStatus.MAXIMUM_HOME_VERIFICATION_ERROR_METERS) {
+                        failReturnHomePreparation(completion,
+                            "DJI uložilo Home Point mimo povolenou odchylku deseti metrů.");
+                        return;
+                    }
+                    configureReturnHomeHeight(current, home, verificationError, heightMeters, completion);
+                }
+
+                @Override public void onFailure(DJIError error) {
+                    failReturnHomePreparation(completion,
+                        "Home Point z telefonu nelze zpětně načíst: " + errorText(error));
                 }
             });
         });
@@ -952,7 +1016,7 @@ final class DjiConnection implements DroneSession {
         if (state.areMotorsOn() || state.isFlying()) return "Dron už má spuštěné motory nebo letí.";
         if (batteryPercent < SafetySupervisor.MINIMUM_BATTERY_PERCENT) return "Pro vzlet je potřeba alespoň dvacet pět procent baterie.";
         if (signalPercent < SafetySupervisor.MINIMUM_SIGNAL_PERCENT) return "Rádiové spojení je pro vzlet příliš slabé.";
-        if (!state.isHomeLocationSet()) return "Domovský bod zatím není uložen.";
+        if (!state.isHomeLocationSet() && !returnHomeStatus.ready) return "Domovský bod zatím není uložen.";
         if (!returnHomeStatus.ready) return "Vzlet je zablokovaný: v aplikaci ulož a ověř návratový bod.";
         if (state.isFailsafeEnabled()) return "DJI failsafe je aktivní.";
         if (state.getFlightWindWarning() != null && "LEVEL_2".equals(state.getFlightWindWarning().name())) return "Silný vítr blokuje autonomní vzlet.";
@@ -965,7 +1029,9 @@ final class DjiConnection implements DroneSession {
         FlightControllerState state = lastFlightState;
         if (state == null) return "Čekám na živou telemetrii letového kontroléru.";
         if (!state.areMotorsOn() || !state.isFlying()) return "Dron právě neletí.";
-        if (returnHome && !state.isHomeLocationSet()) return "Návrat domů nelze spustit bez uloženého domovského bodu.";
+        if (returnHome && !state.isHomeLocationSet() && !returnHomeStatus.ready) {
+            return "Návrat domů nelze spustit bez uloženého domovského bodu.";
+        }
         if (returnHome && !returnHomeStatus.ready) return "Návrat domů je zablokovaný: Home Point nebyl aplikací ověřen.";
         return null;
     }
@@ -1144,12 +1210,24 @@ final class DjiConnection implements DroneSession {
         double aircraftLongitude = aircraftLocation == null ? Double.NaN : aircraftLocation.getLongitude();
         double homeLatitude = homeLocation == null ? Double.NaN : homeLocation.getLatitude();
         double homeLongitude = homeLocation == null ? Double.NaN : homeLocation.getLongitude();
+        boolean homeLocationSet = state.isHomeLocationSet();
+        if (!homeLocationSet && returnHomeStatus.ready) {
+            homeLatitude = returnHomeStatus.latitude;
+            homeLongitude = returnHomeStatus.longitude;
+            homeLocationSet = true;
+        }
         float heading = state.getAttitude() == null ? 0f : (float)state.getAttitude().yaw;
         return new TelemetrySnapshot(registered, connected, product, state.getFlightModeString(),
             batteryPercent, state.getSatelliteCount(), altitude(state), horizontal, state.getVelocityZ(),
             signalPercent, state.areMotorsOn(), state.isFlying(), state.isFailsafeEnabled(),
             state.isGoingHome(), wind, aircraftLatitude, aircraftLongitude, homeLatitude, homeLongitude,
-            heading, state.isHomeLocationSet());
+            heading, homeLocationSet);
+    }
+
+    private static boolean validCoordinate(double latitude, double longitude) {
+        return Double.isFinite(latitude) && Double.isFinite(longitude)
+            && latitude >= -90d && latitude <= 90d && longitude >= -180d && longitude <= 180d
+            && !(Math.abs(latitude) < 0.000001d && Math.abs(longitude) < 0.000001d);
     }
 
     private static float altitude(FlightControllerState state) {

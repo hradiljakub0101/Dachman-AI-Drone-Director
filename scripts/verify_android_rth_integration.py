@@ -14,7 +14,9 @@ def main() -> int:
 
     checks = {
         "DroneSession does not expose Home Point preparation": "prepareReturnHome(int heightMeters" in session,
+        "DroneSession lacks phone-location Home Point fallback": "prepareReturnHomeFromDevice" in session,
         "UI lacks mandatory take-off point control": "ULOŽIT BOD VZLETU" in ui,
+        "UI lacks phone-location Home Point fallback": "HOME Z POLOHY TELEFONU" in ui,
         "UI does not split RTH landing from emergency landing":
             "NÁVRAT A PŘISTÁNÍ" in ui and "NOUZOVĚ PŘISTÁT ZDE" in ui and "setOnLongClickListener" in ui,
         "DJI Home Point is not explicitly stored": "setHomeLocationUsingAircraftCurrentLocation" in dji,

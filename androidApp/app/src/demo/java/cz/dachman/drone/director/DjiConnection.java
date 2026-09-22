@@ -57,6 +57,11 @@ final class DjiConnection implements DroneSession {
         completion.onComplete(false, "Návratový bod vyžaduje DJI variantu a připojený Mini 2.");
     }
 
+    @Override public void prepareReturnHomeFromDevice(double latitude, double longitude,
+            float accuracyMeters, int heightMeters, Completion completion) {
+        completion.onComplete(false, "Telefonní Home Point je dostupný pouze v DJI sestavení.");
+    }
+
     @Override public void startTakeoff(Completion completion) {
         completion.onComplete(false, "Vzlet vyžaduje DJI variantu a připojený Mini 2.");
     }

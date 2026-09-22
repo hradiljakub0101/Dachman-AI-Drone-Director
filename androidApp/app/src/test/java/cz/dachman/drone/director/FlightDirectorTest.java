@@ -74,6 +74,19 @@ public final class FlightDirectorTest {
         }
     }
 
+    @Test public void visualFollowCorrectsSideAndHeightFromFrameError() {
+        FlightPlan plan = new FlightPlan(FlightMode.FOLLOW, FlightLevel.WIDE, FlightProfile.STANDARD);
+        TargetBox offCenter = new TargetBox(0.72f, 0.66f, 0.92f, 0.96f, 0.95f, NOW);
+        TrackingSnapshot tracking = new TrackingSnapshot(Collections.singletonList(offCenter),
+            offCenter, null, NOW);
+        FlightDirector director = new FlightDirector();
+        director.begin(plan, tracking);
+        FlightCommand command = director.command(plan, telemetry(10f), tracking);
+        assertTrue("Target on right must produce lateral correction", command.roll > 0f);
+        assertTrue("Target below centre must produce upward correction", command.vertical < 0f);
+        assertTrue("Target on right must produce heading correction", command.yaw > 0f);
+    }
+
     private static TrackingSnapshot tracking() {
         TargetBox target = new TargetBox(0.58f, 0.30f, 0.78f, 0.70f, 0.9f, NOW);
         return new TrackingSnapshot(Collections.singletonList(target), target, target, NOW);

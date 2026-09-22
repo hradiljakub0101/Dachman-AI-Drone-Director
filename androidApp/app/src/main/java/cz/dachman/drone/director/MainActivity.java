@@ -1,5 +1,6 @@
 package cz.dachman.drone.director;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
@@ -12,6 +13,8 @@ import android.graphics.drawable.GradientDrawable;
 import android.hardware.biometrics.BiometricManager;
 import android.hardware.biometrics.BiometricPrompt;
 import android.hardware.usb.UsbManager;
+import android.location.Location;
+import android.location.LocationManager;
 import android.os.Bundle;
 import android.os.CancellationSignal;
 import android.os.Handler;
@@ -49,6 +52,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private static final int RED = Color.rgb(234, 77, 89);
     private static final int MUTED = Color.rgb(151, 177, 188);
     private static final int DJI_PERMISSION_REQUEST = 2107;
+    private static final int HOME_LOCATION_PERMISSION_REQUEST = 2108;
     private static final int FRAME_WIDTH = 384;
     private static final int FRAME_HEIGHT = 216;
     private static final int CONTROL_DRAWER_DP = 360;
@@ -474,6 +478,11 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         Button saveHome = button("ULOŽIT BOD VZLETU", GREEN,
             () -> dji.prepareReturnHome(rthHeightSeek.getProgress(), this::showCompletion));
         homeCard.addView(saveHome, fullButtonParams());
+        Button saveHomeFromPhone = button("HOME Z POLOHY TELEFONU", ORANGE,
+            this::prepareHomeFromPhone);
+        homeCard.addView(saveHomeFromPhone, fullButtonParams());
+        homeCard.addView(text("Záložní volba: telefon polož vedle dronu. DJI přijme bod jen při přesnosti do patnácti metrů.",
+            8, MUTED, false));
         controls.addView(homeCard);
 
         approvalCard = column();
@@ -1109,11 +1118,48 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode == HOME_LOCATION_PERMISSION_REQUEST) {
+            boolean granted = results.length > 0;
+            for (int result : results) granted &= result == PackageManager.PERMISSION_GRANTED;
+            if (granted) prepareHomeFromPhone();
+            else showStatus("Bez oprávnění k poloze nelze vytvořit záložní Home Point z telefonu.");
+            return;
+        }
         if (requestCode != DJI_PERMISSION_REQUEST) return;
         boolean granted = results.length > 0;
         for (int result : results) granted &= result == PackageManager.PERMISSION_GRANTED;
         if (granted) dji.connect();
         else showStatus("Bez udělených oprávnění se DJI SDK nemůže připojit.");
+    }
+
+    private void prepareHomeFromPhone() {
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION}, HOME_LOCATION_PERMISSION_REQUEST);
+            return;
+        }
+        LocationManager manager = getSystemService(LocationManager.class);
+        if (manager == null) {
+            showStatus("Služba polohy telefonu není dostupná.");
+            return;
+        }
+        String provider = manager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+            ? LocationManager.GPS_PROVIDER : LocationManager.NETWORK_PROVIDER;
+        showStatus("Zjišťuji přesnou polohu telefonu pro Home Point…");
+        try {
+            manager.getCurrentLocation(provider, null, getMainExecutor(), location -> {
+                if (location == null) {
+                    showStatus("Telefon neposkytl platnou polohu. Zapni přesnou polohu a zkus to znovu.");
+                    return;
+                }
+                dji.prepareReturnHomeFromDevice(location.getLatitude(), location.getLongitude(),
+                    location.hasAccuracy() ? location.getAccuracy() : Float.POSITIVE_INFINITY,
+                    rthHeightSeek.getProgress(), this::showCompletion);
+            });
+        } catch (SecurityException exception) {
+            showStatus("Android nepovolil přístup k přesné poloze telefonu.");
+        }
     }
 
     @Override protected void onResume() {

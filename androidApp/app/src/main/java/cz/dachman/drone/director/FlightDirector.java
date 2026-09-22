@@ -48,6 +48,12 @@ public final class FlightDirector {
         float distanceCorrection = clamp(sizeError * profile.maxHorizontalMetersPerSecond * 4f,
             -profile.maxHorizontalMetersPerSecond * 0.55f,
             profile.maxHorizontalMetersPerSecond * 0.55f);
+        float lateralCorrection = clamp(xError * profile.maxHorizontalMetersPerSecond * 1.7f,
+            -profile.maxHorizontalMetersPerSecond * 0.60f,
+            profile.maxHorizontalMetersPerSecond * 0.60f);
+        float heightCorrection = clamp(-yError * profile.maxVerticalMetersPerSecond * 1.8f,
+            -profile.maxVerticalMetersPerSecond * 0.55f,
+            profile.maxVerticalMetersPerSecond * 0.55f);
 
         float pitch = 0f;
         float roll = 0f;
@@ -58,27 +64,34 @@ public final class FlightDirector {
             case FOLLOW:
             case DUO_FOLLOW:
                 pitch = distanceCorrection;
+                roll = lateralCorrection;
+                vertical = heightCorrection;
                 break;
             case ORBIT_LEFT:
                 pitch = distanceCorrection;
-                roll = -profile.maxHorizontalMetersPerSecond * 0.65f;
+                roll = -profile.maxHorizontalMetersPerSecond * 0.65f + lateralCorrection * 0.30f;
+                vertical = heightCorrection;
                 break;
             case ORBIT_RIGHT:
                 pitch = distanceCorrection;
-                roll = profile.maxHorizontalMetersPerSecond * 0.65f;
+                roll = profile.maxHorizontalMetersPerSecond * 0.65f + lateralCorrection * 0.30f;
+                vertical = heightCorrection;
                 break;
             case PULL_AWAY:
                 pitch = -profile.maxHorizontalMetersPerSecond * 0.70f;
+                roll = lateralCorrection;
                 vertical = profile.maxVerticalMetersPerSecond * 0.18f;
                 break;
             case REVEAL_UP:
                 pitch = -profile.maxHorizontalMetersPerSecond * 0.35f;
-                vertical = profile.maxVerticalMetersPerSecond * 0.65f;
+                roll = lateralCorrection;
+                vertical = profile.maxVerticalMetersPerSecond * 0.65f + heightCorrection * 0.25f;
                 break;
             case ROPE_MODE:
                 pitch = clamp(distanceCorrection,
                     -profile.maxHorizontalMetersPerSecond * 0.25f,
                     profile.maxHorizontalMetersPerSecond * 0.25f);
+                roll = lateralCorrection;
                 vertical = clamp(-yError * profile.maxVerticalMetersPerSecond * 2f,
                     -profile.maxVerticalMetersPerSecond * 0.55f,
                     profile.maxVerticalMetersPerSecond * 0.55f);
@@ -128,9 +141,10 @@ public final class FlightDirector {
             float[] body = bodyVelocityTo(telemetry, waypoint, profile.maxHorizontalMetersPerSecond * scale);
             pitch = body[0]; roll = body[1]; yaw = body[2];
             gimbal = plan.mode == FlightMode.ROPE_MODE ? -8f : 0f;
-        } else if ((plan.mode == FlightMode.SURVEY_MAP || plan.mode == FlightMode.ORBIT_LEFT
-                || plan.mode == FlightMode.ORBIT_RIGHT) && telemetry.hasAircraftLocation()) {
-            SiteSafetyPlan.Point center = centroid(site.roofBoundary);
+        } else if (plan.mode == FlightMode.SURVEY_MAP || plan.mode == FlightMode.ORBIT_LEFT
+                || plan.mode == FlightMode.ORBIT_RIGHT) {
+            SiteSafetyPlan.Point center = telemetry.hasAircraftLocation()
+                ? centroid(site.roofBoundary) : null;
             if (center != null) {
                 float[] orbit = orbitVelocity(telemetry, center, profile,
                     plan.mode == FlightMode.ORBIT_LEFT ? -1f : 1f);

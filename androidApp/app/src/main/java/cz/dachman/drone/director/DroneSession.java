@@ -29,6 +29,8 @@ public interface DroneSession {
     void toggleRecording(Completion completion);
     void takePhoto(Completion completion);
     void prepareReturnHome(int heightMeters, Completion completion);
+    void prepareReturnHomeFromDevice(double latitude, double longitude, float accuracyMeters,
+        int heightMeters, Completion completion);
     void startTakeoff(Completion completion);
     void startLanding(Completion completion);
     void startReturnHome(Completion completion);
