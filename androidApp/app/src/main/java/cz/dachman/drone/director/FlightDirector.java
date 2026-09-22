@@ -154,7 +154,9 @@ public final class FlightDirector {
             pitch = -profile.maxHorizontalMetersPerSecond * 0.35f;
             vertical = profile.maxVerticalMetersPerSecond * 0.65f;
             gimbal = -6f;
-        } else if (plan.mode == FlightMode.HOLD || plan.mode == FlightMode.STATIC_TRACK) {
+        } else if (plan.mode == FlightMode.STATIC_TRACK) {
+            return new FlightCommand(0f, 0f, 0f, 0f, 0f, CameraDirector.MIN_DIGITAL_ZOOM);
+        } else if (plan.mode == FlightMode.HOLD) {
             return FlightCommand.ZERO;
         }
         if (telemetry.altitudeMeters >= plan.level.maximumAltitudeMeters && vertical > 0f) vertical = 0f;
