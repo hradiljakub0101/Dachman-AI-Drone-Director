@@ -20,7 +20,7 @@ public final class FlightDirector {
 
     public void begin(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking,
             WorkerGeoSnapshot geo, SafetyConfiguration safetyConfiguration) {
-        TargetBox target = plan.mode.requiresPrimary ? tracking.targetFor(plan.mode) : null;
+        TargetBox target = null; // Person boxes are an optional HUD layer, never a flight dependency.
         cameraDirector.begin(plan, tracking);
         hybridFollow.begin(telemetry, geo == null ? null : geo.targetFor(plan.mode));
         float zoom = Math.max(CameraDirector.MIN_DIGITAL_ZOOM, cameraDirector.appliedZoomFactor());
@@ -45,7 +45,7 @@ public final class FlightDirector {
 
     public FlightCommand command(FlightPlan plan, TelemetrySnapshot telemetry, TrackingSnapshot tracking,
             WorkerGeoSnapshot geo, SafetyConfiguration safetyConfiguration) {
-        TargetBox target = plan.mode.requiresPrimary ? tracking.targetFor(plan.mode) : null;
+        TargetBox target = null; // All autonomous translation comes from the reviewed map plan.
         if (target == null) return smoothMapCommand(plan, telemetry, safetyConfiguration);
 
         FlightProfile profile = plan.profile;
@@ -159,7 +159,7 @@ public final class FlightDirector {
         }
         if (telemetry.altitudeMeters >= plan.level.maximumAltitudeMeters && vertical > 0f) vertical = 0f;
         previous = smooth(previous, new FlightCommand(pitch, roll, yaw, vertical, gimbal,
-            FlightCommand.NO_DIGITAL_ZOOM), 0.22f);
+            CameraDirector.MIN_DIGITAL_ZOOM), 0.22f);
         return previous;
     }
 

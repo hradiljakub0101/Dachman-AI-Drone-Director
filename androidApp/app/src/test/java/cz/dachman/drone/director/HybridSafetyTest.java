@@ -4,7 +4,7 @@ import static org.junit.Assert.assertEquals;
 import org.junit.Test;
 
 public final class HybridSafetyTest {
-    @Test public void stopsInsideWorkerStandoff() {
+    @Test public void workerPositionDoesNotStopMapDirectedFlight() {
         long now = 10_000L;
         TelemetrySnapshot telemetry = telemetry(49.66812, 16.08961);
         TargetBox box = new TargetBox(.4f, .2f, .6f, .8f, .9f, now);
@@ -15,10 +15,10 @@ public final class HybridSafetyTest {
         SafetyDecision decision = new SafetySupervisor().evaluate(
             new FlightPlan(FlightMode.FOLLOW, FlightLevel.ofMeters(15), FlightProfile.PRECISE),
             telemetry, tracking, geo, now, now);
-        assertEquals(SafetyDecision.Action.STOP, decision.action);
+        assertEquals(SafetyDecision.Action.ALLOW, decision.action);
     }
 
-    @Test public void holdsWhenBoundTagIsStale() {
+    @Test public void staleTagDoesNotHoldMapDirectedFlight() {
         long now = 10_000L;
         TelemetrySnapshot telemetry = telemetry(49.66812, 16.08961);
         TargetBox box = new TargetBox(.4f, .2f, .6f, .8f, .9f, now);
@@ -28,7 +28,7 @@ public final class HybridSafetyTest {
         SafetyDecision decision = new SafetySupervisor().evaluate(
             new FlightPlan(FlightMode.FOLLOW, FlightLevel.ofMeters(15), FlightProfile.PRECISE),
             telemetry, tracking, new WorkerGeoSnapshot("one", "", fix, null), now, now);
-        assertEquals(SafetyDecision.Action.HOLD, decision.action);
+        assertEquals(SafetyDecision.Action.ALLOW, decision.action);
     }
 
     private static TelemetrySnapshot telemetry(double latitude, double longitude) {

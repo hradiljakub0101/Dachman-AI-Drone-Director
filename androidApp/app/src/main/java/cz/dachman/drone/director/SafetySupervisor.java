@@ -2,6 +2,7 @@ package cz.dachman.drone.director;
 
 /** Deterministic guard between vision/planning and DJI virtual-stick commands. */
 public final class SafetySupervisor {
+    private static final boolean WORKER_GATES_FLIGHT = false;
     public static final int MINIMUM_BATTERY_PERCENT = 25;
     public static final int MINIMUM_SATELLITES = 8;
     public static final int MINIMUM_SIGNAL_PERCENT = 20;
@@ -46,7 +47,7 @@ public final class SafetySupervisor {
         if (plan.mode.maxDurationMillis > 0 && nowMillis - startedAtMillis > plan.mode.maxDurationMillis) {
             return SafetyDecision.stop("Časový limit manévru vypršel; je nutné nové schválení.");
         }
-        if (plan.mode.requiresPrimary || plan.mode.requiresSecondary) {
+        if (WORKER_GATES_FLIGHT && (plan.mode.requiresPrimary || plan.mode.requiresSecondary)) {
             if (!tracking.hasRequiredTargets(plan.mode)) return SafetyDecision.hold("Chybí potvrzený pracovník pro tento režim.");
             long oldest = tracking.primary == null ? nowMillis : tracking.primary.observedAtMillis;
             float confidence = tracking.primary == null ? 0f : tracking.primary.confidence;
@@ -59,7 +60,7 @@ public final class SafetySupervisor {
             if (age > TARGET_HOLD_AFTER_MILLIS) return SafetyDecision.hold("AI dočasně nevidí cíl – HOLD.");
             if (confidence < 0.35f) return SafetyDecision.hold("Nízká jistota rozpoznání pracovníka.");
         }
-        if (geo != null && geo.hasAnyBinding() && (plan.mode.requiresPrimary || plan.mode.requiresSecondary)) {
+        if (WORKER_GATES_FLIGHT && geo != null && geo.hasAnyBinding()) {
             if (configuration == null || !configuration.standoffCalibrated) {
                 return SafetyDecision.hold("Před vzletem kalibruj bezpečnostní odstup pracovníka.");
             }
@@ -81,12 +82,6 @@ public final class SafetySupervisor {
             }
         }
         SiteSafetyPlan site = configuration == null ? SiteSafetyPlan.empty() : configuration.site;
-        if (plan.mode.requiresMapRoute() && site.roofBoundary.size() < 2) {
-            return SafetyDecision.hold("Pro tento režim zakresli do mapy alespoň dva body trasy.");
-        }
-        if (plan.mode.requiresMapOrbitCenter() && site.roofBoundary.size() < 3) {
-            return SafetyDecision.hold("Pro ORBIT zakresli do mapy pracovní zónu alespoň třemi body.");
-        }
         if (telemetry.hasAircraftLocation() && (site.hasRoofBoundary() || site.hasForbiddenZone())) {
             if (!site.aircraftAllowed(telemetry.aircraftLatitude, telemetry.aircraftLongitude)) {
                 return SafetyDecision.stop("Dron opustil hranici střechy nebo vstoupil do zakázané zóny.");
