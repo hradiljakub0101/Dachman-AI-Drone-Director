@@ -1065,10 +1065,11 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         boolean selectedHeightMatches = rthHeightSeek != null
             && rthHeightSeek.getProgress() == returnHomeStatus.rthHeightMeters;
         returnHomeText.setText(String.format(Locale.getDefault(),
-            "HOME %s • %.5f, %.5f • vzdálenost %s • RTH %d m%s",
+            "HOME %s • %.5f, %.5f • vzdálenost %s • RTH %d m • SMART %s • FAILSAFE %s",
             saved, returnHomeStatus.latitude, returnHomeStatus.longitude, distance,
             returnHomeStatus.rthHeightMeters,
-            selectedHeightMatches ? " • SMART + FAILSAFE OK" : " • ULOŽ ZNOVU"));
+            returnHomeStatus.smartRthEnabled ? "OK" : "NEDOSTUPNÝ",
+            returnHomeStatus.failSafeGoHome ? "GO_HOME" : "NEOVĚŘENÝ"));
         returnHomeText.setTextColor(selectedHeightMatches ? GREEN : ORANGE);
     }
 

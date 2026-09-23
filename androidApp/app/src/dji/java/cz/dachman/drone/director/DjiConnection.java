@@ -930,54 +930,74 @@ final class DjiConnection implements DroneSession {
             double verificationError, int heightMeters, Completion completion) {
         current.setSmartReturnToHomeEnabled(true, error -> {
             if (error != null) {
-                failReturnHomePreparation(completion, "Smart RTH nelze zapnout: " + errorText(error));
+                String issue = "Smart RTH nepodporuje aktuální firmware: " + errorText(error);
+                configureConnectionFailsafe(current, home, verificationError, heightMeters,
+                    false, issue, completion);
                 return;
             }
             current.getSmartReturnToHomeEnabled(new CommonCallbacks.CompletionCallbackWith<Boolean>() {
                 @Override public void onSuccess(Boolean enabled) {
-                    if (enabled == null || !enabled) {
-                        failReturnHomePreparation(completion, "Letový kontrolér nepotvrdil Smart RTH.");
-                        return;
-                    }
-                    configureConnectionFailsafe(current, home, verificationError, heightMeters, completion);
+                    boolean active = enabled != null && enabled;
+                    String issue = active ? "" : "Letový kontrolér nepotvrdil Smart RTH.";
+                    configureConnectionFailsafe(current, home, verificationError, heightMeters,
+                        active, issue, completion);
                 }
 
                 @Override public void onFailure(DJIError error) {
-                    failReturnHomePreparation(completion,
-                        "Smart RTH nelze zpětně ověřit: " + errorText(error));
+                    configureConnectionFailsafe(current, home, verificationError, heightMeters,
+                        false, "Smart RTH nelze zpětně ověřit: " + errorText(error), completion);
                 }
             });
         });
     }
 
     private void configureConnectionFailsafe(FlightController current, LocationCoordinate2D home,
-            double verificationError, int heightMeters, Completion completion) {
+            double verificationError, int heightMeters, boolean smartRth, String priorWarning,
+            Completion completion) {
         current.setConnectionFailSafeBehavior(ConnectionFailSafeBehavior.GO_HOME, error -> {
             if (error != null) {
-                failReturnHomePreparation(completion, "Failsafe GO_HOME nelze nastavit: " + errorText(error));
+                finishReturnHomePreparation(home, verificationError, heightMeters, smartRth, false,
+                    appendWarning(priorWarning, "Failsafe GO_HOME nepodporován: " + errorText(error)), completion);
                 return;
             }
             current.getConnectionFailSafeBehavior(
                 new CommonCallbacks.CompletionCallbackWith<ConnectionFailSafeBehavior>() {
                     @Override public void onSuccess(ConnectionFailSafeBehavior behavior) {
                         boolean goHome = behavior == ConnectionFailSafeBehavior.GO_HOME;
-                        returnHomeStatus = ReturnHomeStatus.verified(home.getLatitude(), home.getLongitude(),
-                            System.currentTimeMillis(), verificationError, heightMeters, true, goHome);
-                        postReturnHomeStatus();
-                        if (returnHomeStatus.ready) {
-                            postCompletion(completion, true,
-                                "Návratový bod, RTH výška, Smart RTH a failsafe GO_HOME jsou ověřené.");
-                        } else {
-                            failReturnHomePreparation(completion, "Failsafe GO_HOME nebyl zpětně potvrzen.");
-                        }
+                        finishReturnHomePreparation(home, verificationError, heightMeters, smartRth, goHome,
+                            goHome ? priorWarning : appendWarning(priorWarning,
+                                "Letový kontrolér nepotvrdil failsafe GO_HOME."), completion);
                     }
 
                     @Override public void onFailure(DJIError error) {
-                        failReturnHomePreparation(completion,
-                            "Failsafe GO_HOME nelze zpětně ověřit: " + errorText(error));
+                        finishReturnHomePreparation(home, verificationError, heightMeters, smartRth, false,
+                            appendWarning(priorWarning, "Failsafe GO_HOME nelze zpětně ověřit: "
+                                + errorText(error)), completion);
                     }
                 });
         });
+    }
+
+    private void finishReturnHomePreparation(LocationCoordinate2D home, double verificationError,
+            int heightMeters, boolean smartRth, boolean goHomeFailsafe, String warning,
+            Completion completion) {
+        returnHomeStatus = ReturnHomeStatus.verified(home.getLatitude(), home.getLongitude(),
+            System.currentTimeMillis(), verificationError, heightMeters, smartRth, goHomeFailsafe);
+        postReturnHomeStatus();
+        if (!returnHomeStatus.ready) {
+            failReturnHomePreparation(completion, "Home Point nebo RTH výška se nepodařilo ověřit.");
+            return;
+        }
+        String message = "Home Point a RTH výška jsou ověřené; příkaz návratu z aplikace i tlačítkem RC "
+            + "použije letový kontrolér DJI. "
+            + (warning == null || warning.isEmpty() ? returnHomeStatus.detail : warning);
+        postCompletion(completion, true, message);
+    }
+
+    private static String appendWarning(String first, String next) {
+        if (first == null || first.isEmpty()) return next;
+        if (next == null || next.isEmpty()) return first;
+        return first + " " + next;
     }
 
     private void failReturnHomePreparation(Completion completion, String message) {

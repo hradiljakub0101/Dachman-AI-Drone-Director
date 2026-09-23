@@ -1,6 +1,6 @@
 package cz.dachman.drone.director;
 
-/** Verified pre-flight configuration shared by the UI and both app flavours. */
+/** Home-point and optional return safety capabilities reported by the DJI controller. */
 public final class ReturnHomeStatus {
     public static final double MAXIMUM_HOME_VERIFICATION_ERROR_METERS = 10d;
 
@@ -49,10 +49,14 @@ public final class ReturnHomeStatus {
         boolean accurate = Double.isFinite(verificationErrorMeters) && verificationErrorMeters >= 0d
             && verificationErrorMeters <= MAXIMUM_HOME_VERIFICATION_ERROR_METERS;
         boolean heightValid = rthHeightMeters >= 20 && rthHeightMeters <= 500;
-        boolean ready = coordinateValid && accurate && heightValid && smartRthEnabled && failSafeGoHome;
+        // The actual Home Point and RTH height are sufficient for a pilot-commanded DJI
+        // startGoHome(). Smart battery RTH and link-loss GO_HOME are reported separately;
+        // older aircraft firmware can reject those settings even after accepting Home.
+        boolean ready = coordinateValid && accurate && heightValid;
         String detail = ready
-            ? "Návratový bod ověřen, Smart RTH zapnutý a ztráta spojení nastavena na GO_HOME."
-            : "Návratový bod nebo bezpečnostní nastavení se nepodařilo ověřit.";
+            ? "Home Point a RTH výška ověřeny. Smart RTH: " + (smartRthEnabled ? "zapnutý" : "nedostupný/neověřený")
+                + ". GO_HOME při ztrátě spojení: " + (failSafeGoHome ? "zapnuto" : "nedostupné/neověřené") + "."
+            : "Home Point nebo RTH výška se nepodařilo ověřit.";
         return new ReturnHomeStatus(ready, false, latitude, longitude, savedAtEpochMillis,
             verificationErrorMeters, verificationErrorMeters, rthHeightMeters,
             smartRthEnabled, failSafeGoHome, detail);

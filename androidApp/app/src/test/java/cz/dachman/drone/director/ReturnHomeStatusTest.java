@@ -17,11 +17,17 @@ public final class ReturnHomeStatusTest {
         assertFalse(status.ready);
     }
 
-    @Test public void missingSmartRthOrFailsafeBlocksTakeoff() {
+    @Test public void unsupportedSmartRthDoesNotEraseVerifiedHomeOrHeight() {
+        ReturnHomeStatus status = ReturnHomeStatus.verified(49.66812, 16.08961, 1_000L,
+            1d, 35, false, false);
+        assertTrue(status.ready);
+        assertFalse(status.smartRthEnabled);
+        assertFalse(status.failSafeGoHome);
+    }
+
+    @Test public void invalidHeightStillBlocksVerifiedHomeConfiguration() {
         assertFalse(ReturnHomeStatus.verified(49.66812, 16.08961, 1_000L,
-            1d, 35, false, true).ready);
-        assertFalse(ReturnHomeStatus.verified(49.66812, 16.08961, 1_000L,
-            1d, 35, true, false).ready);
+            1d, 0, false, false).ready);
     }
 
     @Test public void distanceCalculationIsFinite() {
