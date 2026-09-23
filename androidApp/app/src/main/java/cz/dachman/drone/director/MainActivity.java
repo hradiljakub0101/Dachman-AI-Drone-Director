@@ -971,14 +971,18 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         ui(() -> {
             String battery = value.batteryPercent < 0 ? "—" : value.batteryPercent + "%";
             String signal = value.signalPercent < 0 ? "—" : value.signalPercent + "%";
+            String gnss = value.satellites < 0 ? "—" : Integer.toString(value.satellites);
+            String altitude = value.satellites < 0 ? "—"
+                : String.format(Locale.getDefault(), "%.1f m", value.altitudeMeters);
+            String speed = value.satellites < 0 ? "—"
+                : String.format(Locale.getDefault(), "%.1f m/s", value.horizontalSpeedMetersPerSecond);
             String position = value.hasAircraftLocation()
                 ? String.format(Locale.getDefault(), "%.5f, %.5f", value.aircraftLatitude, value.aircraftLongitude)
                 : "GPS —";
             telemetryText.setText(String.format(Locale.getDefault(),
-                "SDK %s  DRON %s  BAT %s  GNSS %d  SIGNÁL %s\nALT %.1f m  SPD %.1f m/s  %s",
+                "SDK %s  DRON %s  BAT %s  GNSS %s  SIGNÁL %s\nALT %s  SPD %s  %s",
                 value.sdkRegistered ? "OK" : "—", value.connected ? "OK" : "—", battery,
-                value.satellites, signal, value.altitudeMeters,
-                value.horizontalSpeedMetersPerSecond, position));
+                gnss, signal, altitude, speed, position));
             if (flightMap != null) flightMap.updateTelemetry(value);
             if (flightRadar != null) flightRadar.updateTelemetry(value);
             renderReturnHomeStatus();
@@ -1074,7 +1078,11 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             returnHomeStatus.rthHeightMeters,
             returnHomeStatus.smartRthEnabled ? "OK" : "NEDOSTUPNÝ",
             returnHomeStatus.failSafeGoHome ? "GO_HOME" : "NEOVĚŘENÝ",
-            telemetry.hasAircraftLocation() && telemetry.hasHomeLocation() ? "" : " • RTH ČEKÁ NA GNSS/DJI"));
+            telemetry.hasAircraftLocation() && telemetry.hasHomeLocation()
+                ? (Double.isFinite(returnHomeStatus.distanceToHomeMeters)
+                    && returnHomeStatus.distanceToHomeMeters < 20d
+                    ? " • DO 20 m MINI 2 NEPŘELÉTÁ K HOME" : "")
+                : " • RTH ČEKÁ NA GNSS/DJI"));
         returnHomeText.setTextColor(selectedHeightMatches && homeConfigurationReady() ? GREEN : ORANGE);
     }
 

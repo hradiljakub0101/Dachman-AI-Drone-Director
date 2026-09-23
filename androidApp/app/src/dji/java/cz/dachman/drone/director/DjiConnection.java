@@ -863,7 +863,14 @@ final class DjiConnection implements DroneSession {
             flightController.startTakeoff(error -> {
                 if (error != null) {
                     clearAircraftAction();
-                    postCompletion(completion, false, "Vzlet selhal: " + errorText(error));
+                    FlightControllerState observed = lastFlightState;
+                    String context = observed == null ? "Telemetrie DJI chybí."
+                        : "Motory " + (observed.areMotorsOn() ? "zapnuté" : "vypnuté")
+                            + ", let " + (observed.isFlying() ? "potvrzen" : "nepotvrzen")
+                            + ", GNSS " + observed.getSatelliteCount() + ", režim "
+                            + observed.getFlightModeString() + ".";
+                    postCompletion(completion, false, "DJI nepotvrdilo autonomní vzlet: "
+                        + errorText(error) + " " + context + " Nepokoušej se o opakování bez kontroly DJI Fly.");
                 } else {
                     postCompletion(completion, true, "Vzlet zahájen; dron automaticky vystoupá do visu.");
                 }
@@ -1014,7 +1021,8 @@ final class DjiConnection implements DroneSession {
             double verificationError, int heightMeters, Completion completion) {
         current.setSmartReturnToHomeEnabled(true, error -> {
             if (error != null) {
-                String issue = "Smart RTH nepodporuje aktuální firmware: " + errorText(error);
+                String issue = "DJI odmítlo nastavení Smart RTH (volitelná funkce): " + errorText(error)
+                    + ". Verzi firmwaru ani podporu běžného RTH tato odpověď neurčuje.";
                 configureConnectionFailsafe(current, home, verificationError, heightMeters,
                     false, issue, completion);
                 return;
@@ -1072,8 +1080,8 @@ final class DjiConnection implements DroneSession {
             failReturnHomePreparation(completion, "Home Point nebo RTH výška se nepodařilo ověřit.");
             return;
         }
-        String message = "Home Point a RTH výška jsou ověřené; příkaz návratu z aplikace i tlačítkem RC "
-            + "použije letový kontrolér DJI. "
+        String message = "Home Point a RTH výška jsou ověřené v DJI. Návrat se ověřuje až za letu "
+            + "více než 20 m od Home; Mini 2 při bližším RTH zůstává viset. "
             + (warning == null || warning.isEmpty() ? returnHomeStatus.detail : warning);
         postCompletion(completion, true, message);
     }
@@ -1120,6 +1128,11 @@ final class DjiConnection implements DroneSession {
             postCompletion(completion, false, blocked);
             return;
         }
+        String nearby = nearHomeReturnWarning(lastFlightState);
+        if (nearby != null) {
+            postCompletion(completion, false, nearby);
+            return;
+        }
         withoutVirtualStickForReturnHome("Příprava návratu domů", completion, () -> {
             FlightControllerState afterHandoff = lastFlightState;
             if (afterHandoff != null && afterHandoff.isGoingHome()) {
@@ -1129,6 +1142,11 @@ final class DjiConnection implements DroneSession {
             String stillBlocked = validateAirborneAction(true);
             if (stillBlocked != null) {
                 postCompletion(completion, false, stillBlocked);
+                return;
+            }
+            String stillNearby = nearHomeReturnWarning(lastFlightState);
+            if (stillNearby != null) {
+                postCompletion(completion, false, stillNearby);
                 return;
             }
             FlightController current = flightController;
@@ -1175,6 +1193,17 @@ final class DjiConnection implements DroneSession {
         return "GNSS " + state.getSatelliteCount() + ", Home v DJI "
             + (state.isHomeLocationSet() ? "ano" : "ne") + ", RTH "
             + (state.isGoingHome() ? "aktivní" : "nepotvrzené") + ".";
+    }
+
+    private String nearHomeReturnWarning(FlightControllerState state) {
+        if (!validAircraftPosition(state) || !returnHomeStatus.ready) return null;
+        LocationCoordinate3D position = state.getAircraftLocation();
+        double distance = ReturnHomeStatus.distanceMeters(position.getLatitude(), position.getLongitude(),
+            returnHomeStatus.latitude, returnHomeStatus.longitude);
+        if (!Double.isFinite(distance) || distance >= 20d) return null;
+        return String.format(java.util.Locale.getDefault(),
+            "Mini 2 je %.1f m od Home: do 20 m podle DJI při RTH zůstává viset a k bodu nepoletí. "
+                + "Přistaň ručně na bezpečném místě; automatický návrat ověř až venku nad 20 m.", distance);
     }
 
     private void withoutVirtualStick(String reason, Completion completion, Runnable action) {
@@ -1469,7 +1498,7 @@ final class DjiConnection implements DroneSession {
         String product = "Nepřipojeno";
         if (currentAircraft != null && currentAircraft.getModel() != null) product = currentAircraft.getModel().getDisplayName();
         if (state == null || android.os.SystemClock.elapsedRealtime() - lastFlightStateAt > 1_500L) {
-            return new TelemetrySnapshot(registered, connected, product, "—", batteryPercent, 0,
+            return new TelemetrySnapshot(registered, connected, product, "—", batteryPercent, -1,
                 0f, 0f, 0f, signalPercent, false, false, false, false, "UNKNOWN");
         }
         float horizontal = (float)Math.hypot(state.getVelocityX(), state.getVelocityY());
