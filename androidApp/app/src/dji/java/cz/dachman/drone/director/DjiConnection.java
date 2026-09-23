@@ -66,7 +66,8 @@ final class DjiConnection implements DroneSession {
     private long lastVirtualStickErrorAt;
 
     private enum AircraftAction {
-        NONE("ŽÁDNÁ"), TAKEOFF("AUTONOMNÍ VZLET"), LANDING("AUTONOMNÍ PŘISTÁNÍ"), RETURN_HOME("NÁVRAT DOMŮ");
+        NONE("ŽÁDNÁ"), TAKEOFF("AUTONOMNÍ VZLET"), LANDING("AUTONOMNÍ PŘISTÁNÍ"),
+        REQUESTING_RETURN_HOME("ČEKÁM NA DJI RTH"), RETURN_HOME("NÁVRAT DOMŮ");
         final String label;
         AircraftAction(String label) { this.label = label; }
     }
@@ -79,6 +80,7 @@ final class DjiConnection implements DroneSession {
     private boolean closed;
     private volatile boolean virtualStickEnabled;
     private volatile boolean virtualStickEnabling;
+    private final VirtualStickReleaseGate virtualStickRelease = new VirtualStickReleaseGate();
     private volatile boolean manualDeflection;
     private volatile long virtualStickRevision;
     private volatile boolean pilotOverridePending;
@@ -124,6 +126,10 @@ final class DjiConnection implements DroneSession {
     private volatile boolean smartRthConfirmationSent;
     private volatile boolean flightObserved;
     private volatile boolean flightWithoutHomeAccepted;
+    private volatile Completion pendingReturnHome;
+    private volatile String returnHomeCommandError;
+    private volatile boolean returnHomeConfirmedByFlightController;
+    private static final long RETURN_HOME_CONFIRMATION_MILLIS = 8_000L;
 
     private final Runnable connectionRetry = new Runnable() {
         @Override public void run() {
@@ -396,6 +402,9 @@ final class DjiConnection implements DroneSession {
         if (state.isFlying()) flightObserved = true;
         updateReturnHomeDistance(state);
         handleSmartRthRequest(state);
+        if (state.isGoingHome()) {
+            confirmReturnHomeStarted();
+        }
         AircraftAction action = aircraftAction;
         if ((action == AircraftAction.LANDING || action == AircraftAction.RETURN_HOME)
                 && state.isLandingConfirmationNeeded() && !landingConfirmationSent) {
@@ -414,10 +423,25 @@ final class DjiConnection implements DroneSession {
         if (action == AircraftAction.TAKEOFF && elapsed > 2_500L && state.isFlying()
                 && altitude(state) >= 1.0f) {
             finishAircraftAction("Vzlet dokončen; dron visí a čeká na výběr režimu.");
-        } else if ((action == AircraftAction.LANDING || action == AircraftAction.RETURN_HOME)
+        } else if ((action == AircraftAction.LANDING || action == AircraftAction.RETURN_HOME
+                    || action == AircraftAction.REQUESTING_RETURN_HOME)
                 && elapsed > 2_500L && !state.areMotorsOn() && !state.isFlying()) {
-            finishAircraftAction(action == AircraftAction.LANDING
-                ? "Autonomní přistání dokončeno." : "Návrat domů a přistání dokončeny.");
+            Completion waiting = pendingReturnHome;
+            pendingReturnHome = null;
+            if (waiting != null) postCompletion(waiting, false,
+                "Dron přistál dříve, než letový kontrolér potvrdil RTH.");
+            if (action == AircraftAction.LANDING) {
+                finishAircraftAction("Autonomní přistání dokončeno.");
+            } else {
+                LocationCoordinate3D position = state.getAircraftLocation();
+                boolean nearHome = returnHomeConfirmedByFlightController
+                    && validAircraftPosition(state) && position != null
+                    && ReturnHomeStatus.distanceMeters(position.getLatitude(), position.getLongitude(),
+                        returnHomeStatus.latitude, returnHomeStatus.longitude) <= 20d;
+                finishAircraftAction(nearHome
+                    ? "DJI potvrdilo RTH a dosednutí u ověřeného Home Pointu."
+                    : "Dron přistál; návrat a dosednutí u Home Pointu nelze z telemetrie potvrdit.");
+            }
         }
         if (flightObserved && !state.areMotorsOn() && !state.isFlying()) {
             flightObserved = false;
@@ -433,11 +457,29 @@ final class DjiConnection implements DroneSession {
     private void updateReturnHomeDistance(FlightControllerState state) {
         ReturnHomeStatus status = returnHomeStatus;
         LocationCoordinate3D location = state.getAircraftLocation();
-        if (!status.ready || location == null) return;
+        if (!status.ready || location == null || !validAircraftPosition(state)) return;
         double distance = ReturnHomeStatus.distanceMeters(location.getLatitude(), location.getLongitude(),
             status.latitude, status.longitude);
         returnHomeStatus = status.withDistanceToHome(distance);
         postReturnHomeStatus();
+    }
+
+    private void confirmReturnHomeStarted() {
+        if (aircraftAction != AircraftAction.RETURN_HOME) {
+            if (virtualStickEnabled || virtualStickEnabling) {
+                postPilotOverride("DJI zahájilo RTH; AI řízení bylo zastaveno.");
+                disableVirtualStick("Předání RTH letovému kontroléru", (success, message) -> {
+                    if (!success) postStatus("Zkontroluj převzetí řízení DJI: " + message);
+                });
+            }
+            setAircraftAction(AircraftAction.RETURN_HOME);
+            postStatus("Letový kontrolér DJI potvrdil návrat domů (příkaz aplikace nebo ovladače).");
+        }
+        returnHomeConfirmedByFlightController = true;
+        Completion waiting = pendingReturnHome;
+        pendingReturnHome = null;
+        if (waiting != null) postCompletion(waiting, true,
+            "DJI potvrdilo RTH v živé telemetrii; pilot sleduje dron až do dosednutí.");
     }
 
     private void handleSmartRthRequest(FlightControllerState state) {
@@ -459,21 +501,29 @@ final class DjiConnection implements DroneSession {
     private void beginAutomaticReturnHome(String reason, boolean smartRequestActive) {
         FlightController current = flightController;
         FlightControllerState state = lastFlightState;
-        if (current == null || state == null || !state.isHomeLocationSet()) {
-            postStatus("KRITICKÉ: Automatický RTH nelze spustit bez platného Home Pointu. Pilot musí převzít řízení.");
+        if (current == null || state == null) {
+            postStatus("KRITICKÉ: Automatický RTH nemá živou telemetrii. Pilot musí převzít řízení.");
             return;
         }
-        if (!returnHomeStatus.ready) {
-            postStatus("KRITICKÉ: Návratový bod nebyl aplikací ověřen. Pilot musí převzít řízení.");
+        String blocked = liveReturnHomeBlock(state);
+        if (blocked != null) {
+            postStatus("KRITICKÉ: Automatický RTH nelze spustit: " + blocked + " Pilot musí převzít řízení.");
             return;
         }
         withoutVirtualStick(reason, (success, message) -> {
             if (!success) postStatus("KRITICKÉ: " + message);
         }, () -> {
-            setAircraftAction(AircraftAction.RETURN_HOME);
+            String stillBlocked = liveReturnHomeBlock(lastFlightState);
+            if (stillBlocked != null) {
+                postStatus("KRITICKÉ: RTH po předání řízení není připravené: " + stillBlocked);
+                return;
+            }
+            setAircraftAction(AircraftAction.REQUESTING_RETURN_HOME);
+            long requestedAt = aircraftActionStartedAt;
+            main.postDelayed(() -> verifyAutomaticReturnHome(requestedAt), RETURN_HOME_CONFIRMATION_MILLIS);
             if (smartRequestActive) {
                 current.confirmSmartReturnToHomeRequest(true, error -> {
-                    if (error == null) postStatus(reason + " Smart RTH potvrzeno.");
+                    if (error == null) postStatus(reason + " Smart RTH přijato; čekám na telemetrii DJI.");
                     else startGoHomeFallback(current, reason);
                 });
             } else {
@@ -484,12 +534,26 @@ final class DjiConnection implements DroneSession {
 
     private void startGoHomeFallback(FlightController current, String reason) {
         current.startGoHome(error -> {
-            if (error == null) postStatus(reason + " RTH převzal letový kontrolér DJI.");
-            else {
-                clearAircraftAction();
-                postStatus("KRITICKÉ: Návrat domů se nepodařilo spustit: " + errorText(error));
-            }
+            if (error == null) postStatus(reason + " Povel RTH odeslán; čekám na potvrzení DJI telemetrií.");
+            else if (lastFlightState != null && lastFlightState.isGoingHome()) {
+                postStatus(reason + " DJI hlásí RTH i přes chybu odpovědi příkazu.");
+            } else postStatus("DJI vrátilo chybu automatického RTH: " + errorText(error)
+                + ". Sleduji živý stav dronu; pilot je připraven převzít řízení.");
         });
+    }
+
+    private void verifyAutomaticReturnHome(long requestedAt) {
+        if (aircraftAction != AircraftAction.REQUESTING_RETURN_HOME
+                || aircraftActionStartedAt != requestedAt) return;
+        FlightControllerState state = lastFlightState;
+        if (state != null && SystemClock.elapsedRealtime() - lastFlightStateAt <= 1_500L
+                && state.isGoingHome()) {
+            confirmReturnHomeStarted();
+            return;
+        }
+        clearAircraftAction();
+        postStatus("KRITICKÉ: Automatický RTH nebyl potvrzen letovým kontrolérem. "
+            + returnHomeDiagnostic(state) + " Pilot musí převzít řízení.");
     }
 
     private synchronized void onHardwareState(HardwareState state) {
@@ -615,6 +679,10 @@ final class DjiConnection implements DroneSession {
 
     @Override public synchronized void enableVirtualStick(Completion completion) {
         FlightController current = flightController;
+        if (virtualStickRelease.pending()) {
+            postCompletion(completion, false, "Čekám na potvrzení vypnutí předchozího řízení DJI.");
+            return;
+        }
         if (!supportsLiveControl() || current == null) {
             postCompletion(completion, false, "Mini 2 a RC-N1 nejsou připravené pro řízení.");
             return;
@@ -753,19 +821,34 @@ final class DjiConnection implements DroneSession {
     }
 
     @Override public synchronized void disableVirtualStick(String reason, Completion completion) {
-        virtualStickRevision++;
-        virtualStickEnabling = false;
-        FlightController current = flightController;
-        virtualStickEnabled = false;
-        if (current == null) {
-            postCompletion(completion, true, reason);
-            return;
-        }
-        current.sendVirtualStickFlightControlData(new FlightControlData(0f, 0f, 0f, 0f), null);
-        rotateGimbal(0f);
-        current.setVirtualStickAdvancedModeEnabled(false);
-        current.setVirtualStickModeEnabled(false, error -> postCompletion(completion, error == null,
-            error == null ? reason : reason + " Vypnutí Virtual Stick: " + errorText(error)));
+        virtualStickRelease.request(reply -> {
+            virtualStickRevision++;
+            virtualStickEnabling = false;
+            FlightController current = flightController;
+            virtualStickEnabled = false;
+            if (current == null) {
+                reply.onComplete(false, "Předání řízení selhalo: letový kontrolér není připojen.");
+                return;
+            }
+            current.sendVirtualStickFlightControlData(new FlightControlData(0f, 0f, 0f, 0f), null);
+            rotateGimbal(0f);
+            current.setVirtualStickAdvancedModeEnabled(false);
+            current.setVirtualStickModeEnabled(false, error -> {
+                if (error != null) {
+                    reply.onComplete(false, "DJI nepotvrdilo vypnutí Virtual Stick: " + errorText(error));
+                    return;
+                }
+                current.getVirtualStickModeEnabled(new CommonCallbacks.CompletionCallbackWith<Boolean>() {
+                    @Override public void onSuccess(Boolean enabled) {
+                        reply.onComplete(Boolean.FALSE.equals(enabled), Boolean.FALSE.equals(enabled)
+                            ? reason : "DJI stále hlásí aktivní Virtual Stick; RTH nelze předat.");
+                    }
+                    @Override public void onFailure(DJIError readError) {
+                        reply.onComplete(false, "Stav Virtual Stick nelze zpětně ověřit: " + errorText(readError));
+                    }
+                });
+            });
+        }, (success, message) -> postCompletion(completion, success, message));
     }
 
     @Override public void startTakeoff(Completion completion) {
@@ -1026,26 +1109,75 @@ final class DjiConnection implements DroneSession {
     }
 
     @Override public void startReturnHome(Completion completion) {
+        FlightControllerState currentState = lastFlightState;
+        if (currentState != null && currentState.isGoingHome()) {
+            postCompletion(completion, true, "DJI už provádí návrat domů; sleduj dron.");
+            return;
+        }
         String blocked = validateAirborneAction(true);
         if (blocked != null) {
             postCompletion(completion, false, blocked);
             return;
         }
         withoutVirtualStick("Příprava návratu domů", completion, () -> {
-            setAircraftAction(AircraftAction.RETURN_HOME);
-            flightController.startGoHome(error -> {
+            FlightControllerState afterHandoff = lastFlightState;
+            if (afterHandoff != null && afterHandoff.isGoingHome()) {
+                postCompletion(completion, true, "DJI už provádí RTH po převzetí řízení.");
+                return;
+            }
+            String stillBlocked = validateAirborneAction(true);
+            if (stillBlocked != null) {
+                postCompletion(completion, false, stillBlocked);
+                return;
+            }
+            FlightController current = flightController;
+            setAircraftAction(AircraftAction.REQUESTING_RETURN_HOME);
+            pendingReturnHome = completion;
+            returnHomeCommandError = "";
+            returnHomeConfirmedByFlightController = false;
+            long requestedAt = aircraftActionStartedAt;
+            main.postDelayed(() -> verifyReturnHomeResponse(requestedAt), RETURN_HOME_CONFIRMATION_MILLIS);
+            current.startGoHome(error -> {
+                if (pendingReturnHome == null || aircraftActionStartedAt != requestedAt) return;
                 if (error != null) {
-                    clearAircraftAction();
-                    postCompletion(completion, false, "Návrat domů selhal: " + errorText(error));
+                    returnHomeCommandError = errorText(error);
+                    postStatus("DJI vrátilo chybu příkazu RTH: " + returnHomeCommandError
+                        + ". Ověřuji skutečný letový stav.");
                 } else {
-                    postCompletion(completion, true, "Návrat domů zahájen; pilot musí sledovat celou trasu.");
+                    postStatus("DJI přijalo příkaz RTH; čekám na potvrzení návratu v telemetrii.");
                 }
             });
         });
     }
 
+    private void verifyReturnHomeResponse(long requestedAt) {
+        if (aircraftActionStartedAt != requestedAt || pendingReturnHome == null) return;
+        FlightControllerState state = lastFlightState;
+        if (state != null && SystemClock.elapsedRealtime() - lastFlightStateAt <= 1_500L
+                && state.isGoingHome()) {
+            confirmReturnHomeStarted();
+            return;
+        }
+        Completion waiting = pendingReturnHome;
+        pendingReturnHome = null;
+        clearAircraftAction();
+        String error = returnHomeCommandError == null || returnHomeCommandError.isEmpty()
+            ? "DJI nepotvrdilo režim návratu v časovém limitu."
+            : "DJI: " + returnHomeCommandError + ".";
+        postCompletion(waiting, false, error + " " + returnHomeDiagnostic(state)
+            + " Převezmi řízení, případně použij fyzické tlačítko RTH na RC-N1.");
+    }
+
+    private String returnHomeDiagnostic(FlightControllerState state) {
+        if (state == null || SystemClock.elapsedRealtime() - lastFlightStateAt > 1_500L)
+            return "Živá telemetrie chybí.";
+        return "GNSS " + state.getSatelliteCount() + ", Home v DJI "
+            + (state.isHomeLocationSet() ? "ano" : "ne") + ", RTH "
+            + (state.isGoingHome() ? "aktivní" : "nepotvrzené") + ".";
+    }
+
     private void withoutVirtualStick(String reason, Completion completion, Runnable action) {
-        if (!virtualStickEnabled) {
+        if (!virtualStickEnabled && !virtualStickEnabling && !virtualStickRelease.pending()) {
             action.run();
             return;
         }
@@ -1064,6 +1196,11 @@ final class DjiConnection implements DroneSession {
         }
         dji.common.util.CommonCallbacks.CompletionCallback<DJIError> callback = error -> {
             if (error == null) {
+                if (action == AircraftAction.REQUESTING_RETURN_HOME && pendingReturnHome != null) {
+                    Completion waiting = pendingReturnHome;
+                    pendingReturnHome = null;
+                    postCompletion(waiting, false, "Pilot zrušil požadavek RTH před potvrzením DJI.");
+                }
                 clearAircraftAction();
                 postCompletion(completion, true, "Automatická akce zrušena; dron přechází do visu.");
             } else {
@@ -1100,11 +1237,30 @@ final class DjiConnection implements DroneSession {
         FlightControllerState state = lastFlightState;
         if (state == null) return "Čekám na živou telemetrii letového kontroléru.";
         if (!state.areMotorsOn() || !state.isFlying()) return "Dron právě neletí.";
-        if (returnHome && !state.isHomeLocationSet() && !returnHomeStatus.ready) {
-            return "Návrat domů nelze spustit bez uloženého domovského bodu.";
+        return returnHome ? liveReturnHomeBlock(state) : null;
+    }
+
+    private String liveReturnHomeBlock(FlightControllerState state) {
+        if (state == null || SystemClock.elapsedRealtime() - lastFlightStateAt > 1_500L)
+            return "RTH čeká na aktuální telemetrii DJI.";
+        if (!returnHomeStatus.ready) return "Home Point nebyl aplikací ověřen.";
+        if (!state.isHomeLocationSet()) return "Letový kontrolér DJI aktuálně nepotvrzuje Home Point.";
+        LocationCoordinate2D controllerHome = state.getHomeLocation();
+        if (controllerHome == null || !returnHomeStatus.matchesAircraftHome(
+                controllerHome.getLatitude(), controllerHome.getLongitude())) {
+            return "Home Point v letovém kontroléru se liší od uloženého bodu; ověř ho znovu.";
         }
-        if (returnHome && !returnHomeStatus.ready) return "Návrat domů je zablokovaný: Home Point nebyl aplikací ověřen.";
+        if (!validAircraftPosition(state)) return "RTH vyžaduje živou GNSS polohu dronu.";
         return null;
+    }
+
+    private static boolean validAircraftPosition(FlightControllerState state) {
+        if (state == null || state.getAircraftLocation() == null || state.getGPSSignalLevel() == null)
+            return false;
+        String level = state.getGPSSignalLevel().name();
+        return ("LEVEL_3".equals(level) || "LEVEL_4".equals(level) || "LEVEL_5".equals(level))
+            && validCoordinate(state.getAircraftLocation().getLatitude(),
+                state.getAircraftLocation().getLongitude());
     }
 
     private String validateCommon() {
@@ -1125,6 +1281,7 @@ final class DjiConnection implements DroneSession {
         aircraftAction = AircraftAction.NONE;
         aircraftActionStartedAt = 0L;
         landingConfirmationSent = false;
+        returnHomeConfirmedByFlightController = false;
         postAction();
     }
 
@@ -1211,6 +1368,10 @@ final class DjiConnection implements DroneSession {
     }
 
     private synchronized void releaseProduct(String message) {
+        virtualStickRelease.cancel("Předání řízení přerušeno: spojení s DJI skončilo.");
+        Completion waiting = pendingReturnHome;
+        pendingReturnHome = null;
+        if (waiting != null) postCompletion(waiting, false, "Návrat nebyl potvrzen: spojení s DJI skončilo.");
         virtualStickEnabled = false;
         main.removeCallbacks(videoWatchdog);
         unbindCallbacks();
@@ -1288,11 +1449,6 @@ final class DjiConnection implements DroneSession {
         double homeLatitude = homeLocation == null ? Double.NaN : homeLocation.getLatitude();
         double homeLongitude = homeLocation == null ? Double.NaN : homeLocation.getLongitude();
         boolean homeLocationSet = state.isHomeLocationSet();
-        if (!homeLocationSet && returnHomeStatus.ready) {
-            homeLatitude = returnHomeStatus.latitude;
-            homeLongitude = returnHomeStatus.longitude;
-            homeLocationSet = true;
-        }
         float heading = state.getAttitude() == null ? 0f : (float)state.getAttitude().yaw;
         return new TelemetrySnapshot(registered, connected, product, state.getFlightModeString(),
             batteryPercent, state.getSatelliteCount(), altitude(state), horizontal, state.getVelocityZ(),

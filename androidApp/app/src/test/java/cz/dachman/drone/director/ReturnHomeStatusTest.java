@@ -34,4 +34,12 @@ public final class ReturnHomeStatusTest {
         double distance = ReturnHomeStatus.distanceMeters(49.66812, 16.08961, 49.66813, 16.08962);
         assertTrue(distance > 0d && distance < 5d);
     }
+
+    @Test public void controllerHomeMustMatchSavedAircraftLocation() {
+        ReturnHomeStatus saved = ReturnHomeStatus.verified(49.66812, 16.08961, 1_000L,
+            1d, 35, false, false);
+        assertTrue(saved.matchesAircraftHome(49.66813, 16.08962));
+        assertFalse(saved.matchesAircraftHome(49.66890, 16.09040));
+        assertFalse(saved.matchesAircraftHome(0d, 0d));
+    }
 }

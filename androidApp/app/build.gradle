@@ -40,8 +40,8 @@ android {
         applicationId 'cz.dachman.drone.director'
         minSdk 30
         targetSdk 34
-        versionCode 20
-        versionName '0.15.3'
+        versionCode 21
+        versionName '0.15.4'
         manifestPlaceholders = [djiAppKey: validDjiKey ? djiKey : '__DJI_APP_KEY__']
     }
     flavorDimensions += 'connection'

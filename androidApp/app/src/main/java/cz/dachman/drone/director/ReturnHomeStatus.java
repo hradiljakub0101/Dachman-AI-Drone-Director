@@ -68,6 +68,13 @@ public final class ReturnHomeStatus {
             failSafeGoHome, detail);
     }
 
+    /** A saved app value cannot stand in for the aircraft's current Home Point. */
+    public boolean matchesAircraftHome(double aircraftHomeLatitude, double aircraftHomeLongitude) {
+        return ready && validCoordinate(aircraftHomeLatitude, aircraftHomeLongitude)
+            && distanceMeters(latitude, longitude, aircraftHomeLatitude, aircraftHomeLongitude)
+                <= MAXIMUM_HOME_VERIFICATION_ERROR_METERS;
+    }
+
     public static double distanceMeters(double firstLatitude, double firstLongitude,
             double secondLatitude, double secondLongitude) {
         if (!validCoordinate(firstLatitude, firstLongitude)

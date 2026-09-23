@@ -858,12 +858,13 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             dji.startLanding(this::showCompletion);
         } else if (kind == PendingKind.RETURN_HOME) {
             runtime.abort("Návrat domů – Virtual Stick vypnut");
-            authority.beginRth(true);
-            updateAuthorityUi();
             closeHudDrawers();
             dji.startReturnHome((success, message) -> {
                 showCompletion(success, message);
-                if (!success) {
+                if (success) {
+                    authority.beginRth(true);
+                    updateAuthorityUi();
+                } else if (authority.state() == ControlAuthority.State.RTH) {
                     authority.finishRth();
                     updateAuthorityUi();
                 }
@@ -980,6 +981,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
                 value.horizontalSpeedMetersPerSecond, position));
             if (flightMap != null) flightMap.updateTelemetry(value);
             if (flightRadar != null) flightRadar.updateTelemetry(value);
+            renderReturnHomeStatus();
+            updateApprovalButton();
             renderFlightReadiness();
         });
     }
@@ -1033,7 +1036,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     }
 
     private boolean homeConfigurationReady() {
-        return returnHomeStatus.ready && rthHeightSeek != null
+        return returnHomeStatus.ready && telemetry.hasHomeLocation()
+            && telemetry.hasAircraftLocation() && rthHeightSeek != null
             && returnHomeStatus.rthHeightMeters == rthHeightSeek.getProgress();
     }
 
@@ -1065,12 +1069,13 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         boolean selectedHeightMatches = rthHeightSeek != null
             && rthHeightSeek.getProgress() == returnHomeStatus.rthHeightMeters;
         returnHomeText.setText(String.format(Locale.getDefault(),
-            "HOME %s • %.5f, %.5f • vzdálenost %s • RTH %d m • SMART %s • FAILSAFE %s",
+            "HOME %s • %.5f, %.5f • vzdálenost %s • RTH %d m • SMART %s • FAILSAFE %s%s",
             saved, returnHomeStatus.latitude, returnHomeStatus.longitude, distance,
             returnHomeStatus.rthHeightMeters,
             returnHomeStatus.smartRthEnabled ? "OK" : "NEDOSTUPNÝ",
-            returnHomeStatus.failSafeGoHome ? "GO_HOME" : "NEOVĚŘENÝ"));
-        returnHomeText.setTextColor(selectedHeightMatches ? GREEN : ORANGE);
+            returnHomeStatus.failSafeGoHome ? "GO_HOME" : "NEOVĚŘENÝ",
+            telemetry.hasAircraftLocation() && telemetry.hasHomeLocation() ? "" : " • RTH ČEKÁ NA GNSS/DJI"));
+        returnHomeText.setTextColor(selectedHeightMatches && homeConfigurationReady() ? GREEN : ORANGE);
     }
 
     private void renderRecordingUi() {
