@@ -485,7 +485,7 @@ final class DjiConnection implements DroneSession {
     private void handleSmartRthRequest(FlightControllerState state) {
         if (state.getGoHomeAssessment() == null
                 || state.getGoHomeAssessment().getSmartRTHState() != SmartRTHState.COUNTING_DOWN
-                || smartRthConfirmationSent) return;
+                || smartRthConfirmationSent || aircraftAction != AircraftAction.NONE) return;
         smartRthConfirmationSent = true;
         beginAutomaticReturnHome("DJI Smart RTH vyhodnotilo nedostatek energie.", true);
     }
@@ -493,7 +493,8 @@ final class DjiConnection implements DroneSession {
     private void handleBatterySafety() {
         FlightControllerState state = lastFlightState;
         if (state == null || batteryPercent < 0 || batteryPercent > AUTOMATIC_RTH_BATTERY_PERCENT
-                || !state.isFlying() || state.isGoingHome() || lowBatteryRthTriggered) return;
+                || !state.isFlying() || state.isGoingHome() || lowBatteryRthTriggered
+                || aircraftAction != AircraftAction.NONE) return;
         lowBatteryRthTriggered = true;
         beginAutomaticReturnHome("Baterie klesla na bezpečnostní mez; spouštím návrat domů.", false);
     }
@@ -510,7 +511,7 @@ final class DjiConnection implements DroneSession {
             postStatus("KRITICKÉ: Automatický RTH nelze spustit: " + blocked + " Pilot musí převzít řízení.");
             return;
         }
-        withoutVirtualStick(reason, (success, message) -> {
+        withoutVirtualStickForReturnHome(reason, (success, message) -> {
             if (!success) postStatus("KRITICKÉ: " + message);
         }, () -> {
             String stillBlocked = liveReturnHomeBlock(lastFlightState);
@@ -1119,7 +1120,7 @@ final class DjiConnection implements DroneSession {
             postCompletion(completion, false, blocked);
             return;
         }
-        withoutVirtualStick("Příprava návratu domů", completion, () -> {
+        withoutVirtualStickForReturnHome("Příprava návratu domů", completion, () -> {
             FlightControllerState afterHandoff = lastFlightState;
             if (afterHandoff != null && afterHandoff.isGoingHome()) {
                 postCompletion(completion, true, "DJI už provádí RTH po převzetí řízení.");
@@ -1184,6 +1185,43 @@ final class DjiConnection implements DroneSession {
         disableVirtualStick(reason, (success, message) -> {
             if (success) action.run();
             else postCompletion(completion, false, message);
+        });
+    }
+
+    private void withoutVirtualStickForReturnHome(String reason, Completion completion, Runnable action) {
+        FlightController current = flightController;
+        if (current == null || !supportsLiveControl()) {
+            postCompletion(completion, false, "DJI letový kontrolér není připojen.");
+            return;
+        }
+        if (virtualStickEnabled || virtualStickEnabling || virtualStickRelease.pending()) {
+            disableVirtualStick(reason, (success, message) -> {
+                if (success && current == flightController && supportsLiveControl()) action.run();
+                else postCompletion(completion, false, success ? "Spojení s DJI se změnilo." : message);
+            });
+            return;
+        }
+        current.getVirtualStickModeEnabled(new CommonCallbacks.CompletionCallbackWith<Boolean>() {
+            @Override public void onSuccess(Boolean enabled) {
+                if (current != flightController || !supportsLiveControl()) {
+                    postCompletion(completion, false, "Spojení s DJI se změnilo.");
+                } else if (Boolean.TRUE.equals(enabled) || virtualStickRelease.pending()) {
+                    disableVirtualStick(reason, (success, message) -> {
+                        if (success && current == flightController && supportsLiveControl()) action.run();
+                        else postCompletion(completion, false,
+                            success ? "Spojení s DJI se změnilo." : message);
+                    });
+                } else if (Boolean.FALSE.equals(enabled)) {
+                    action.run();
+                } else {
+                    postCompletion(completion, false, "DJI nevrátilo stav Virtual Stick; RTH nebylo odesláno.");
+                }
+            }
+
+            @Override public void onFailure(DJIError error) {
+                postCompletion(completion, false,
+                    "Před RTH nelze ověřit stav Virtual Stick: " + errorText(error));
+            }
         });
     }
 
