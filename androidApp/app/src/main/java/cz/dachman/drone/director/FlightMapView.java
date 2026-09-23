@@ -5,7 +5,9 @@ import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.location.Location;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 import java.util.ArrayList;
@@ -38,7 +40,7 @@ public final class FlightMapView extends FrameLayout {
                 + MapTileIndex.getY(tileIndex) + "/" + MapTileIndex.getX(tileIndex) + mImageFilenameEnding;
         }
     };
-    private final MapView map;
+    private final InteractiveMapView map;
     private final Marker aircraftMarker;
     private final Marker homeMarker;
     private final Polyline track;
@@ -46,7 +48,11 @@ public final class FlightMapView extends FrameLayout {
     private final Polygon forbiddenPolygon;
     private final List<GeoPoint> trackPoints = new ArrayList<>();
     private GeoPoint lastTrackPoint;
+    private GeoPoint currentAircraftPoint;
     private long lastCenterUpdate;
+    private boolean followAircraft = true;
+    private boolean satelliteTiles = true;
+    private final TextView mapLayerLabel;
     private EditorMode editorMode = EditorMode.NONE;
     private SafetyPlanListener safetyPlanListener;
     private final List<SiteSafetyPlan.Point> roofPoints = new ArrayList<>();
@@ -63,10 +69,14 @@ public final class FlightMapView extends FrameLayout {
         setBackground(frame);
         setClipToOutline(true);
 
-        map = new MapView(context);
+        map = new InteractiveMapView(context);
         map.setTileSource(SATELLITE);
         map.setMultiTouchControls(true);
-        map.setTilesScaledToDpi(true);
+        // Keep native tile zoom levels: DPI scaling can request detail beyond the
+        // imagery provider's maximum and leave overlays on an otherwise blank map.
+        map.setTilesScaledToDpi(false);
+        map.setMinZoomLevel(3.0);
+        map.setMaxZoomLevel(19.0);
         map.getController().setZoom(18.0);
         addView(map, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -109,7 +119,20 @@ public final class FlightMapView extends FrameLayout {
         labelParams.setMargins(dp(6), dp(6), 0, 0);
         addView(label, labelParams);
 
-        TextView attribution = hudLabel("© Esri • satelitní mapa", Color.WHITE);
+        mapLayerLabel = hudLabel("SAT", Color.WHITE);
+        Button layerButton = mapButton("SAT / MAP", () -> toggleTileSource());
+        FrameLayout.LayoutParams layerParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, dp(29), Gravity.TOP | Gravity.RIGHT);
+        layerParams.setMargins(0, dp(5), dp(5), 0);
+        addView(layerButton, layerParams);
+
+        Button centerButton = mapButton("⌖", this::centerOnAircraft);
+        FrameLayout.LayoutParams centerParams = new FrameLayout.LayoutParams(
+            dp(34), dp(29), Gravity.TOP | Gravity.RIGHT);
+        centerParams.setMargins(0, dp(38), dp(5), 0);
+        addView(centerButton, centerParams);
+
+        TextView attribution = hudLabel("© Esri / © OpenStreetMap", Color.WHITE);
         FrameLayout.LayoutParams attributionParams = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, dp(20), Gravity.BOTTOM | Gravity.RIGHT);
         attributionParams.setMargins(0, 0, dp(4), dp(3));
@@ -122,12 +145,13 @@ public final class FlightMapView extends FrameLayout {
             GeoPoint home = new GeoPoint(telemetry.homeLatitude, telemetry.homeLongitude);
             homeMarker.setPosition(home);
             homeMarker.setEnabled(true);
-            if (!telemetry.hasAircraftLocation()) map.getController().animateTo(home);
+            if (!telemetry.hasAircraftLocation() && followAircraft) map.getController().animateTo(home);
         } else {
             homeMarker.setEnabled(false);
         }
         if (!telemetry.hasAircraftLocation()) { map.invalidate(); return; }
         GeoPoint aircraft = new GeoPoint(telemetry.aircraftLatitude, telemetry.aircraftLongitude);
+        currentAircraftPoint = aircraft;
         aircraftMarker.setEnabled(true);
         aircraftMarker.setPosition(aircraft);
         aircraftMarker.setRotation(-telemetry.headingDegrees);
@@ -143,11 +167,52 @@ public final class FlightMapView extends FrameLayout {
         }
 
         long now = android.os.SystemClock.elapsedRealtime();
-        if (now - lastCenterUpdate > 900L) {
+        if (followAircraft && now - lastCenterUpdate > 900L) {
             map.getController().animateTo(aircraft);
             lastCenterUpdate = now;
         }
         map.invalidate();
+    }
+
+    private void toggleTileSource() {
+        satelliteTiles = !satelliteTiles;
+        map.setTileSource(satelliteTiles ? SATELLITE : TileSourceFactory.MAPNIK);
+        mapLayerLabel.setText(satelliteTiles ? "SAT" : "MAP");
+        map.invalidate();
+    }
+
+    private void centerOnAircraft() {
+        followAircraft = true;
+        lastCenterUpdate = 0L;
+        if (currentAircraftPoint != null) map.getController().animateTo(currentAircraftPoint);
+        map.invalidate();
+    }
+
+    private Button mapButton(String title, Runnable action) {
+        Button button = new Button(getContext());
+        button.setText(title);
+        button.setTextSize(9f);
+        button.setTextColor(Color.WHITE);
+        button.setAllCaps(false);
+        button.setPadding(dp(4), 0, dp(4), 0);
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(Color.argb(220, 5, 17, 24));
+        background.setCornerRadius(dp(7));
+        background.setStroke(dp(1), GREEN);
+        button.setBackground(background);
+        button.setOnClickListener(view -> action.run());
+        return button;
+    }
+
+    private final class InteractiveMapView extends MapView {
+        InteractiveMapView(Context context) { super(context); }
+        @Override public boolean onTouchEvent(MotionEvent event) {
+            if (event != null && (event.getActionMasked() == MotionEvent.ACTION_DOWN
+                    || event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN)) {
+                followAircraft = false;
+            }
+            return super.onTouchEvent(event);
+        }
     }
 
     public void setEditorMode(EditorMode mode) { editorMode = mode == null ? EditorMode.NONE : mode; }

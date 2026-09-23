@@ -41,6 +41,8 @@ jobs:
         run: python3 scripts/verify_android_recording_integration.py
       - name: Verify Home Point and automatic RTH integration
         run: python3 scripts/verify_android_rth_integration.py
+      - name: Verify interactive map tiles, zoom and drawing
+        run: python3 scripts/verify_android_map_integration.py
       - name: Verify camera-only Worker tracking and optional map polygons
         run: python3 scripts/verify_android_worker_tracking.py
       - name: Verify production flight-command wiring
@@ -95,7 +97,7 @@ jobs:
           mkdir -p release
           cp downloaded-apks/dji/debug/app-dji-debug.apk "release/Dachman-AI-Drone-Director-v${release_version}-DJI.apk"
           cp downloaded-apks/demo/debug/app-demo-debug.apk "release/Dachman-AI-Drone-Director-v${release_version}-Demo.apk"
-          cp docs/ANDROID_V0_15_2_CZ.md release/OVERENI-A-POKYNY.md
+          cp "docs/ANDROID_V${release_version//./_}_CZ.md" release/OVERENI-A-POKYNY.md
           (
             cd release
             sha256sum "Dachman-AI-Drone-Director-v${release_version}-DJI.apk" > SHA256SUMS.txt
@@ -109,8 +111,8 @@ jobs:
         shell: bash
         run: |
           if gh release view "$release_tag" >/dev/null 2>&1; then
-            gh release edit "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes-file docs/ANDROID_V0_15_2_CZ.md
+            gh release edit "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes-file "docs/ANDROID_V${release_version//./_}_CZ.md"
           else
-            gh release create "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes-file docs/ANDROID_V0_15_2_CZ.md
+            gh release create "$release_tag" --target "$GITHUB_SHA" --title "Dachman AI Drone Director Android v${release_version}" --notes-file "docs/ANDROID_V${release_version//./_}_CZ.md"
           fi
           gh release upload "$release_tag" release/*.apk release/*.zip --clobber
