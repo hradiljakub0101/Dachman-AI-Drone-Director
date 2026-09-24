@@ -13,7 +13,9 @@ jobs:
   core-tests:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - run: swift test
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
@@ -21,7 +23,9 @@ jobs:
     name: iOS DJI compatibility build
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - run: xcodebuild -version
       - run: brew install xcodegen cocoapods
       - run: xcodegen generate
@@ -43,7 +47,9 @@ jobs:
     if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - run: xcodebuild -version
       - run: brew install xcodegen cocoapods
       - run: xcodegen generate
@@ -151,7 +157,7 @@ jobs:
           echo "Unsigned IPA packaged successfully."
 
       - name: Upload unsigned IPA artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: DachmanDroneDirector-unsigned-ipa
           path: |

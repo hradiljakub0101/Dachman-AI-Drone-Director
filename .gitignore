@@ -6,6 +6,7 @@ Pods/
 .build/
 build/
 .gradle/
+.copilot-tmp/
 local.properties
 *.jks
 *.keystore

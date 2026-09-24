@@ -15,8 +15,10 @@ jobs:
   android:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v6.0.1
         with:
           distribution: temurin
           java-version: '17'
@@ -30,7 +32,7 @@ jobs:
           test -n "$android_sdk"
           test -d "$android_sdk"
           echo "Android SDK available at $android_sdk"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6.3.0
         with:
           gradle-version: '8.11.1'
       - name: Verify DJI RC-N1 USB integration
@@ -56,7 +58,7 @@ jobs:
         run: gradle testDemoDebugUnitTest testDjiDebugUnitTest assembleDemoDebug assembleDjiDebug
       - name: Upload unit and software-in-the-loop reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: android-test-reports
           path: |
@@ -68,7 +70,7 @@ jobs:
         env:
           DJI_ANDROID_APP_KEY: ${{ secrets.DJI_ANDROID_APP_KEY }}
         run: python3 scripts/verify_android_apk.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: android-debug-apks
           path: androidApp/app/build/outputs/apk/*/debug/*.apk
@@ -82,8 +84,10 @@ jobs:
       contents: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8.0.1
         with:
           name: android-debug-apks
           path: downloaded-apks
