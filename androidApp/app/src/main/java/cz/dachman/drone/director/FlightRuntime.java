@@ -32,6 +32,11 @@ public final class FlightRuntime {
     private volatile boolean closed;
     private volatile FlightCommand lastCommand = FlightCommand.ZERO;
     private volatile BuildingSpatialModel spatialModel;
+    private volatile ReturnHomeStatus verifiedHome = ReturnHomeStatus.missing("Home není ověřen.");
+    private volatile ReturnHomeStatus pinnedApproachHome;
+    private double approachStartDistance = Double.NaN;
+    private double approachBestDistance = Double.NaN;
+    private long approachProgressAt;
     private BuildingSpatialModel.Builder surveyBuilder;
     private String lastMessage = "";
 
@@ -53,6 +58,9 @@ public final class FlightRuntime {
         lastTelemetryAt = now();
     }
     public void updateTracking(TrackingSnapshot tracking) { this.tracking = tracking; }
+    public void updateVerifiedHome(ReturnHomeStatus status) {
+        verifiedHome = status == null ? ReturnHomeStatus.missing("Home není ověřen.") : status;
+    }
     public void updateSafetyConfiguration(SafetyConfiguration configuration) {
         safetyConfiguration = configuration == null ? SafetyConfiguration.defaults() : configuration;
     }
@@ -64,7 +72,13 @@ public final class FlightRuntime {
 
     public synchronized SafetyDecision preflight(FlightPlan candidate) {
         if (now() - lastTelemetryAt > 1_500L) return SafetyDecision.stop("Telemetrie dronu není aktuální.");
-        return safety.evaluate(candidate, telemetry, tracking, safetyConfiguration, now(), now());
+        SafetyDecision decision = safety.evaluate(candidate, telemetry, tracking, safetyConfiguration, now(), now());
+        if (decision.action != SafetyDecision.Action.ALLOW || candidate.mode != FlightMode.HOME_APPROACH)
+            return decision;
+        HomeApproachGuidance.Result approach = HomeApproachGuidance.calculate(telemetry,
+            verifiedHome, safetyConfiguration);
+        return approach.stopReason != null || approach.arrived
+            ? SafetyDecision.stop(approach.stopReason) : decision;
     }
 
     public synchronized void start(FlightPlan candidate, DroneSession.Completion completion) {
@@ -81,6 +95,7 @@ public final class FlightRuntime {
         final long challenge = ++revision;
         starting = true;
         startedAt = now();
+        pinnedApproachHome = candidate.mode == FlightMode.HOME_APPROACH ? verifiedHome : null;
         director.begin(candidate, telemetry, tracking, safetyConfiguration);
         if (candidate.mode == FlightMode.SURVEY_MAP) {
             surveyBuilder = new BuildingSpatialModel.Builder(safetyConfiguration.site.roofBoundary);
@@ -93,6 +108,9 @@ public final class FlightRuntime {
             }
             starting = false;
             SafetyDecision refreshed = preflight(candidate);
+            if (candidate.mode == FlightMode.HOME_APPROACH && !approachHomeStillVerified()) {
+                refreshed = SafetyDecision.stop("Home Point se během přípravy změnil.");
+            }
             if (!success || refreshed.action != SafetyDecision.Action.ALLOW) {
                 if (success) session.disableVirtualStick(refreshed.reason, (ignored, detail) -> {});
                 completion.onComplete(false, success ? refreshed.reason : message);
@@ -103,6 +121,13 @@ public final class FlightRuntime {
             lastAcceptedAt = startedAt;
             holdSince = 0L;
             lastCommand = FlightCommand.ZERO;
+            if (candidate.mode == FlightMode.HOME_APPROACH) {
+                HomeApproachGuidance.Result initial = HomeApproachGuidance.calculate(telemetry,
+                    pinnedApproachHome, safetyConfiguration);
+                approachStartDistance = initial.distanceMeters;
+                approachBestDistance = initial.distanceMeters;
+                approachProgressAt = now();
+            }
             active = true;
             emit("AKTIVNÍ: " + candidate.mode.label, FlightCommand.ZERO);
             completion.onComplete(true, message);
@@ -140,6 +165,7 @@ public final class FlightRuntime {
             return;
         }
         if (decision.action == SafetyDecision.Action.HOLD) {
+            if (current.mode == FlightMode.HOME_APPROACH) { stop(decision.reason); return; }
             if (holdSince == 0L) holdSince = now;
             boolean localizationLost = !telemetry.hasAircraftLocation()
                 && (current.mode.requiresMapRoute() || current.mode.requiresMapOrbitCenter());
@@ -152,7 +178,29 @@ public final class FlightRuntime {
             return;
         }
         holdSince = 0L;
-        FlightCommand command = director.command(current, telemetry, tracking, safetyConfiguration);
+        FlightCommand command;
+        if (current.mode == FlightMode.HOME_APPROACH) {
+            HomeApproachGuidance.Result approach = HomeApproachGuidance.calculate(telemetry,
+                pinnedApproachHome, safetyConfiguration);
+            if (!approachHomeStillVerified() || approach.stopReason != null) {
+                stop(approach.stopReason == null ? "Home Point se změnil." : approach.stopReason);
+                return;
+            }
+            if (approach.arrived) { stop(approach.stopReason); return; }
+            if (approach.distanceMeters > approachStartDistance + 2d) {
+                stop("Přiblížení se vzdaluje od Home: pilot přebírá řízení."); return;
+            }
+            if (approach.distanceMeters < approachBestDistance - 0.8d) {
+                approachBestDistance = approach.distanceMeters;
+                approachProgressAt = now;
+            }
+            if (now - approachProgressAt > 10_000L) {
+                stop("Přiblížení nemá ověřitelný postup k Home: pilot přebírá řízení."); return;
+            }
+            command = approach.command;
+        } else {
+            command = director.command(current, telemetry, tracking, safetyConfiguration);
+        }
         if (current.mode == FlightMode.SURVEY_MAP && surveyBuilder != null) {
             surveyBuilder.observe(telemetry);
             BuildingSpatialModel next = surveyBuilder.snapshot(now);
@@ -190,6 +238,7 @@ public final class FlightRuntime {
             surveyBuilder = null;
         }
         plan = null;
+        pinnedApproachHome = null;
         holdSince = 0L;
         director.reset();
         lastCommand = FlightCommand.ZERO;
@@ -218,6 +267,15 @@ public final class FlightRuntime {
     }
 
     private long now() { return clock.getAsLong(); }
+
+    private boolean approachHomeStillVerified() {
+        ReturnHomeStatus current = verifiedHome, pinned = pinnedApproachHome;
+        return current != null && pinned != null && current.ready && pinned.ready
+            && pinned.savedAtEpochMillis == current.savedAtEpochMillis
+            && pinned.rthHeightMeters == current.rthHeightMeters
+            && ReturnHomeStatus.distanceMeters(pinned.latitude, pinned.longitude,
+                current.latitude, current.longitude) < 0.1d;
+    }
 
     static FlightCommand brakingCommand(FlightCommand previous, long elapsedMillis) {
         if (previous == null || elapsedMillis >= 1_500L) return FlightCommand.ZERO;

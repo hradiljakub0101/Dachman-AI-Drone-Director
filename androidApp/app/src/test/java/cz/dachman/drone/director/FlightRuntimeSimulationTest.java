@@ -120,7 +120,7 @@ public final class FlightRuntimeSimulationTest {
 
     @Test public void explicitHomeUnavailableModeAllowsEveryAutonomousMovementWithoutHomeOrGps() {
         for (FlightMode mode : FlightMode.values()) {
-            if (mode == FlightMode.HOLD) continue;
+            if (mode == FlightMode.HOLD || mode == FlightMode.HOME_APPROACH) continue;
             try (Rig r = new Rig()) {
                 r.selection = mode.requiresSecondary ? TargetSelection.BOTH : TargetSelection.WORKER_ONE;
                 r.home = false;

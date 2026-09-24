@@ -11,7 +11,8 @@ public enum FlightMode {
     ORBIT_RIGHT("ORBIT VPRAVO", true, false, 25_000),
     PULL_AWAY("VZDÁLENÝ ODJEZD", true, false, 10_000),
     REVEAL_UP("STOUPAVÝ PRŮLET", true, false, 8_000),
-    ROPE_MODE("ROPE TRASA", true, false, 60_000);
+    ROPE_MODE("ROPE TRASA", true, false, 60_000),
+    HOME_APPROACH("TEST: PŘIBLÍŽENÍ K HOME", false, false, 45_000);
 
     public final String label;
     public final boolean requiresPrimary;

@@ -514,6 +514,10 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         homeCard.addView(saveHomeFromPhone, fullButtonParams());
         homeCard.addView(text("Záložní volba: telefon polož vedle dronu. DJI přijme bod jen při přesnosti do patnácti metrů.",
             8, MUTED, false));
+        homeCard.addView(button("TEST: PŘIBLÍŽIT K HOME (BEZ PŘISTÁNÍ)", ORANGE,
+            () -> requestMode(FlightMode.HOME_APPROACH)), fullButtonParams());
+        homeCard.addView(text("Jen pro volné venkovní prostranství a pilota u RC-N1. Do 19,5 m; zastaví přibližně 8 m od Home. Nejde o DJI RTH.",
+            8, MUTED, false));
         homeUnavailableCheck = new CheckBox(this);
         homeUnavailableCheck.setTextColor(Color.WHITE);
         homeUnavailableCheck.setButtonTintList(ColorStateList.valueOf(ORANGE));
@@ -679,6 +683,11 @@ public final class MainActivity extends Activity implements DroneSession.Listene
             return;
         }
         FlightPlan candidate = selectedPlan(mode);
+        if (mode == FlightMode.HOME_APPROACH && (!homeConfigurationReady()
+                || flightWithoutHomeAccepted())) {
+            showStatus("Krátké přiblížení vyžaduje ověřený Home Point přímo v DJI.");
+            return;
+        }
         if (mode.requiresPrimary && (tracker == null
                 || !tracker.snapshot().hasRequiredTargets(candidate))) {
             showStatus("Nejprve označ zvolený cíl: " + selectedTargets.label);
@@ -698,8 +707,12 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         pendingPlan = candidate;
         pendingKind = PendingKind.MODE;
         gate.request(pendingPlan.approvalText());
-        pendingText.setText(pendingPlan.approvalText()
-            + "\nKamera AI: centrování cíle, gimbal a podporovaný zoom.");
+        pendingText.setText(mode == FlightMode.HOME_APPROACH
+            ? "ZKUŠEBNÍ PŘIBLÍŽENÍ K HOME: pouze volná trasa bez lidí a překážek. "
+                + "Virtual Stick poletí nejvýše 0,35 m/s a před Home zastaví ve visu. "
+                + "Pilot musí sledovat dron, přistání provede ručně."
+            : pendingPlan.approvalText()
+                + "\nKamera AI: centrování cíle, gimbal a podporovaný zoom.");
         readinessCheck.setVisibility(View.GONE);
         readinessCheck.setChecked(false);
         approvalCard.setVisibility(View.GONE);
@@ -1032,6 +1045,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     @Override public void onReturnHomeStatus(ReturnHomeStatus status) {
         if (status == null) return;
+        if (runtime != null) runtime.updateVerifiedHome(status);
         ui(() -> {
             returnHomeStatus = status;
             renderReturnHomeStatus();

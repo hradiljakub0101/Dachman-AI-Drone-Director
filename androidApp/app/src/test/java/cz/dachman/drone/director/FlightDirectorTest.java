@@ -10,7 +10,7 @@ public final class FlightDirectorTest {
 
     @Test public void everyModeStaysInsideSelectedProfile() {
         for (FlightMode mode : FlightMode.values()) {
-            if (mode == FlightMode.HOLD) continue;
+            if (mode == FlightMode.HOLD || mode == FlightMode.HOME_APPROACH) continue;
             FlightPlan plan = new FlightPlan(mode, FlightLevel.WIDE, FlightProfile.STANDARD);
             TrackingSnapshot tracking = tracking();
             FlightDirector director = new FlightDirector();
