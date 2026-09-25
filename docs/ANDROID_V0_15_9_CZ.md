@@ -1,0 +1,7 @@
+# Android 0.15.9 – nezávislé nahrávání kamery
+
+Tlačítko **● REC** spouští video na microSD kartě připojeného DJI Mini 2 bez výběru Worker 1 či Worker 2 a bez zapnutí AI. Po potvrzení příkazu kamerou se změní na **■ STOP**. Výběr osoby, přechod mezi letovými režimy, HOLD, převzetí kniplem a RTH neposílají příkaz k zastavení nahrávání. Pilot záznam zastaví stisknutím **■ STOP**.
+
+Při spouštění záznamu je volba FOTO blokována, aby nemohla přepnout kameru do režimu fotografie dříve, než kamera potvrdí video. Kamera nejprve ověří aktuální režim; pokud už je v běžném režimu videa, nemusí posílat zbytečný příkaz ke změně režimu. Více souběžných příkazů REC je odmítnuto. Pokud kamera sama ohlásí ukončení záznamu nebo vypadne spojení, aplikace na to upozorní; po obnovení spojení načte skutečný stav kamery. Karta může být plná nebo vadná a záznam může přerušit firmware či vypnutí dronu. Aplikace takovou událost nepřekrývá tvrzením, že video dále běží.
+
+Automatické testy ověřují samostatné zahájení a ukončení nahrávání, závod REC/FOTO, chybu kamery a přetrvání záznamu přes změnu letového režimu a převzetí pilotem. Sestavení obou variant APK a instalovatelnost kontroluje Android workflow. **Fyzické nahrávání na skutečnou kartu je nutné ověřit s RC-N1 a dronem:** připoj Mini 2, zkontroluj SD OK, bez výběru pracovníka spusť REC; změň režim, převezmi řízení a ověř, že stále svítí STOP; potom STOP a video na kartě přehraj v DJI Fly nebo v počítači.

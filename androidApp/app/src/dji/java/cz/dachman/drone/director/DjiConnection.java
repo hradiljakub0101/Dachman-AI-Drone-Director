@@ -84,9 +84,8 @@ final class DjiConnection implements DroneSession {
     private volatile boolean manualDeflection;
     private volatile long virtualStickRevision;
     private volatile boolean pilotOverridePending;
-    private volatile boolean recording;
-    /** Prevent overlapping start/stop requests while DJI completes the prior command. */
-    private boolean recordingCommandPending;
+    private final RecordingSession recordingSession = new RecordingSession();
+    private boolean photoCommandPending;
     private volatile CameraStorageStatus cameraStorageStatus = CameraStorageStatus.disconnected();
     private volatile boolean videoActive;
     private boolean compatibleModel;
@@ -188,7 +187,7 @@ final class DjiConnection implements DroneSession {
     @Override public void setListener(Listener listener) {
         this.listener = listener;
         postTelemetry();
-        postCamera(recording);
+        postCamera(recordingSession.isRecording());
         postCameraStorage();
         postCameraAutomation();
         postAction();
@@ -367,10 +366,15 @@ final class DjiConnection implements DroneSession {
             postTelemetry();
         });
         if (remoteController != null) remoteController.setHardwareStateCallback(this::onHardwareState);
-        if (camera != null) camera.setSystemStateCallback(state -> {
-            recording = state.isRecording();
-            postCamera(recording);
-        });
+        if (camera != null) {
+            Camera boundCamera = camera;
+            boundCamera.setSystemStateCallback(state -> {
+                if (camera != boundCamera) return;
+                boolean interrupted = recordingSession.cameraState(state.isRecording());
+                postCamera(recordingSession.isRecording());
+                if (interrupted) postStatus("Nahrávání se v DJI kameře přerušilo. Zkontroluj microSD a stiskni REC pro nové spuštění.");
+            });
+        }
         if (camera != null) camera.setStorageStateCallBack(this::onCameraStorageState);
         videoRestartAttempts = 0;
         startVideoFeed();
@@ -391,7 +395,7 @@ final class DjiConnection implements DroneSession {
             state.isFormatting(), state.isFull(), state.isVerified(), state.hasError(),
             state.getAvailableRecordingTimeInSeconds());
         postCameraStorage();
-        if (recording && !cameraStorageStatus.ready) {
+        if (recordingSession.isRecording() && !cameraStorageStatus.ready) {
             postStatus("VAROVÁNÍ ZÁZNAMU: " + cameraStorageStatus.detail);
         }
     }
@@ -1359,39 +1363,57 @@ final class DjiConnection implements DroneSession {
 
     @Override public void toggleRecording(Completion completion) {
         Camera current = camera;
-        if (current == null || !current.isConnected()) {
+        RecordingSession.Command command;
+        synchronized (this) {
+            if (photoCommandPending) {
+                postCompletion(completion, false, "Kamera právě dokončuje fotografii. Zkus REC znovu.");
+                return;
+            }
+            command = recordingSession.toggle(current != null && current.isConnected(),
+                cameraStorageStatus.ready);
+        }
+        if (command == RecordingSession.Command.BUSY) {
+            postCompletion(completion, false, "Kamera právě zpracovává předchozí příkaz nahrávání.");
+            return;
+        }
+        if (command == RecordingSession.Command.CAMERA_MISSING) {
             postCompletion(completion, false, "Kamera není připojena.");
             return;
         }
-        if (!recording && !cameraStorageStatus.ready) {
+        if (command == RecordingSession.Command.STORAGE_MISSING) {
             postCompletion(completion, false, cameraStorageStatus.detail);
             return;
         }
-        synchronized (this) {
-            if (recordingCommandPending) {
-                postCompletion(completion, false, "Kamera právě zpracovává předchozí příkaz nahrávání.");
-                return;
-            }
-            recordingCommandPending = true;
-        }
-        if (recording) {
+        if (command == RecordingSession.Command.STOP) {
             current.stopRecordVideo(error -> {
-                synchronized (this) { recordingCommandPending = false; }
-                if (error == null) { recording = false; postCamera(false); }
+                if (camera != current) {
+                    postCompletion(completion, false, "Spojení s kamerou se změnilo; ověř stav záznamu v DJI.");
+                    return;
+                }
+                recordingSession.completed(command, error == null);
+                if (error == null) postCamera(false);
                 postCompletion(completion, error == null,
                     error == null ? "Nahrávání zastaveno." : "Nahrávání nelze zastavit: " + errorText(error));
             });
             return;
         }
         setNormalVideoMode(current, error -> {
+            if (camera != current) {
+                postCompletion(completion, false, "Spojení s kamerou se změnilo; ověř stav záznamu v DJI.");
+                return;
+            }
             if (error != null) {
-                synchronized (this) { recordingCommandPending = false; }
+                recordingSession.completed(command, false);
                 postCompletion(completion, false, "Režim videa nelze nastavit: " + errorText(error));
                 return;
             }
             current.startRecordVideo(startError -> {
-                synchronized (this) { recordingCommandPending = false; }
-                if (startError == null) { recording = true; postCamera(true); }
+                if (camera != current) {
+                    postCompletion(completion, false, "Spojení s kamerou se změnilo; ověř stav záznamu v DJI.");
+                    return;
+                }
+                recordingSession.completed(command, startError == null);
+                if (startError == null) postCamera(true);
                 postCompletion(completion, startError == null,
                     startError == null ? "Nahrávání spuštěno." : "Nahrávání nelze spustit: " + errorText(startError));
             });
@@ -1408,29 +1430,56 @@ final class DjiConnection implements DroneSession {
             flatModeSupported = false;
         }
         if (flatModeSupported) {
-            current.setFlatMode(SettingsDefinitions.FlatCameraMode.VIDEO_NORMAL, completion);
+            current.getFlatMode(new CommonCallbacks.CompletionCallbackWith<SettingsDefinitions.FlatCameraMode>() {
+                @Override public void onSuccess(SettingsDefinitions.FlatCameraMode mode) {
+                    if (mode == SettingsDefinitions.FlatCameraMode.VIDEO_NORMAL) completion.onResult(null);
+                    else current.setFlatMode(SettingsDefinitions.FlatCameraMode.VIDEO_NORMAL, completion);
+                }
+                @Override public void onFailure(DJIError error) {
+                    current.setFlatMode(SettingsDefinitions.FlatCameraMode.VIDEO_NORMAL, completion);
+                }
+            });
         } else {
-            current.setMode(SettingsDefinitions.CameraMode.RECORD_VIDEO, completion);
+            current.getMode(new CommonCallbacks.CompletionCallbackWith<SettingsDefinitions.CameraMode>() {
+                @Override public void onSuccess(SettingsDefinitions.CameraMode mode) {
+                    if (mode == SettingsDefinitions.CameraMode.RECORD_VIDEO) completion.onResult(null);
+                    else current.setMode(SettingsDefinitions.CameraMode.RECORD_VIDEO, completion);
+                }
+                @Override public void onFailure(DJIError error) {
+                    current.setMode(SettingsDefinitions.CameraMode.RECORD_VIDEO, completion);
+                }
+            });
         }
     }
 
     @Override public void takePhoto(Completion completion) {
         Camera current = camera;
-        if (current == null || !current.isConnected()) {
-            postCompletion(completion, false, "Kamera není připojena.");
-            return;
-        }
-        if (recording) {
-            postCompletion(completion, false, "Nejprve zastav nahrávání videa.");
-            return;
+        synchronized (this) {
+            if (current == null || !current.isConnected()) {
+                postCompletion(completion, false, "Kamera není připojena.");
+                return;
+            }
+            if (recordingSession.isRecordingOrStarting()) {
+                postCompletion(completion, false, "Nejprve zastav nahrávání videa.");
+                return;
+            }
+            if (photoCommandPending) {
+                postCompletion(completion, false, "Kamera právě dokončuje fotografii.");
+                return;
+            }
+            photoCommandPending = true;
         }
         current.setMode(SettingsDefinitions.CameraMode.SHOOT_PHOTO, error -> {
             if (error != null) {
+                synchronized (this) { photoCommandPending = false; }
                 postCompletion(completion, false, "Režim fotografie nelze nastavit: " + errorText(error));
                 return;
             }
-            current.startShootPhoto(photoError -> postCompletion(completion, photoError == null,
-                photoError == null ? "Fotografie pořízena." : "Fotografii nelze pořídit: " + errorText(photoError)));
+            current.startShootPhoto(photoError -> {
+                synchronized (this) { photoCommandPending = false; }
+                postCompletion(completion, photoError == null,
+                    photoError == null ? "Fotografie pořízena." : "Fotografii nelze pořídit: " + errorText(photoError));
+            });
         });
     }
 
@@ -1453,8 +1502,8 @@ final class DjiConnection implements DroneSession {
         batteryPercent = -1;
         signalPercent = -1;
         lastFlightState = null;
-        recording = false;
-        recordingCommandPending = false;
+        boolean recordingWasActive = recordingSession.disconnect();
+        photoCommandPending = false;
         cameraStorageStatus = CameraStorageStatus.disconnected();
         returnHomeStatus = ReturnHomeStatus.missing("Dron není připojen.");
         lowBatteryRthTriggered = false;
@@ -1471,7 +1520,8 @@ final class DjiConnection implements DroneSession {
         postCameraStorage();
         postReturnHomeStatus();
         clearAircraftAction();
-        postStatus(message);
+        postStatus(message + (recordingWasActive
+            ? " Stav nahrávání po ztrátě spojení není ověřen; po obnovení zkontroluj kameru a microSD." : ""));
         postVideo(false);
         postCamera(false);
         postTelemetry();

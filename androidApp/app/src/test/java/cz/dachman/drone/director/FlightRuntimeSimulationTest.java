@@ -42,6 +42,24 @@ public final class FlightRuntimeSimulationTest {
         }
     }
 
+    @Test public void recordingContinuesAcrossFollowHoldAndPilotTakeoverWithoutSecondWorker() {
+        try (Rig r = new Rig()) {
+            r.session.toggleRecording((success, message) -> assertTrue(success));
+            assertTrue(r.session.recording.isRecording());
+            r.start(FlightMode.FOLLOW, TargetSelection.WORKER_ONE);
+            for (int i = 0; i < 10; i++) r.step();
+            assertTrue(r.session.recording.isRecording());
+            r.runtime.hold("Pilot stopped AI motion");
+            assertTrue(r.session.recording.isRecording());
+            r.runtime.abort("Pilot took control");
+            assertTrue(r.session.recording.isRecording());
+            assertEquals(1, r.session.recordingCommands);
+            r.session.toggleRecording((success, message) -> assertTrue(success));
+            assertFalse(r.session.recording.isRecording());
+            assertEquals(2, r.session.recordingCommands);
+        }
+    }
+
     @Test public void everyWorkerModeAcceptsOneOrTwoExplicitTargets() {
         for (FlightMode mode : FlightMode.values()) {
             if (!mode.requiresPrimary) continue;
@@ -324,6 +342,8 @@ public final class FlightRuntimeSimulationTest {
 
     private static final class FakeSession implements DroneSession {
         final List<VirtualStickPacket> packets = new ArrayList<>();
+        final RecordingSession recording = new RecordingSession();
+        int recordingCommands;
         FlightCommand last = FlightCommand.ZERO;
         int enableCalls, disableCalls;
         boolean enabled, reject, delayEnable, acknowledge = true;
@@ -347,7 +367,13 @@ public final class FlightRuntimeSimulationTest {
         @Override public void attachVideo(SurfaceTexture texture, int width, int height) {}
         @Override public void detachVideo() {}
         @Override public boolean supportsLiveControl() { return false; }
-        @Override public void toggleRecording(Completion done) { throw new AssertionError("Not a recording simulator"); }
+        @Override public void toggleRecording(Completion done) {
+            RecordingSession.Command command = recording.toggle(true, true);
+            assertTrue(command == RecordingSession.Command.START || command == RecordingSession.Command.STOP);
+            recordingCommands++;
+            recording.completed(command, true);
+            done.onComplete(true, "Simulated camera ACK");
+        }
         @Override public void takePhoto(Completion done) { throw new AssertionError("Not a camera simulator"); }
         @Override public void prepareReturnHome(int height, Completion done) { throw new AssertionError("No real Home Point writes"); }
         @Override public void prepareReturnHomeFromDevice(double lat, double lon, float accuracy, int height, Completion done) { throw new AssertionError("No real Home Point writes"); }

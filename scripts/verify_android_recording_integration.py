@@ -27,8 +27,14 @@ def main() -> int:
             "Flat Camera Mode is not used for Mini 2 firmware", errors)
     require("startRecordVideo" in dji and "stopRecordVideo" in dji,
             "DJI start/stop recording callbacks are incomplete", errors)
-    require("recordingCommandPending" in dji and "Kamera právě zpracovává" in dji,
+    require("recordingSession.toggle(" in dji and "Kamera právě zpracovává" in dji,
             "Overlapping recording commands are not guarded", errors)
+    require("recordingSession.isRecordingOrStarting()" in dji and "photoCommandPending" in dji,
+            "FOTO can change the camera mode while recording starts", errors)
+    require("recordingSession.cameraState(state.isRecording())" in dji,
+            "Unexpected camera interruption is not monitored", errors)
+    require("stopRecordVideo" not in (ROOT / "androidApp/app/src/main/java/cz/dachman/drone/director/FlightRuntime.java").read_text(encoding="utf-8"),
+            "AI flight lifecycle must never stop camera recording", errors)
     require("postCamera(true)" in dji and "postCamera(false)" in dji,
             "Successful start/stop does not immediately synchronize UI state", errors)
     require("setStorageStateCallBack" in dji and "CameraStorageStatus.evaluate" in dji,
