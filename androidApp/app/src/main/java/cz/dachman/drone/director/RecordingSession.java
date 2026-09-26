@@ -6,10 +6,11 @@ final class RecordingSession {
 
     private boolean recording;
     private boolean pending;
+    private boolean awaitingStartConfirmation;
     private boolean pilotRequested;
 
     synchronized Command toggle(boolean cameraConnected, boolean storageReady) {
-        if (pending) return Command.BUSY;
+        if (pending || awaitingStartConfirmation) return Command.BUSY;
         if (!cameraConnected) return Command.CAMERA_MISSING;
         if (recording) {
             pending = true;
@@ -26,31 +27,55 @@ final class RecordingSession {
         if (command != Command.START && command != Command.STOP) return;
         pending = false;
         if (command == Command.START) {
-            if (success) recording = true;
-            else pilotRequested = recording;
-        } else if (success) {
-            recording = false;
+            if (!success) {
+                awaitingStartConfirmation = false;
+                pilotRequested = false;
+                recording = false;
+            } else {
+                awaitingStartConfirmation = !recording;
+            }
         } else {
-            pilotRequested = recording;
+            awaitingStartConfirmation = false;
+            if (success) recording = false;
+            else pilotRequested = recording;
         }
     }
 
-    /** Returns true once when the aircraft reports an unexpected stop. */
+    /** Returns true only after DJI camera state confirms video is actually recording. */
     synchronized boolean cameraState(boolean isRecording) {
-        boolean interrupted = recording && !isRecording && pilotRequested && !pending;
-        recording = isRecording;
+        if (isRecording) {
+            recording = true;
+            awaitingStartConfirmation = false;
+            pilotRequested = true;
+            return false;
+        }
+        // Ignore a stale "not recording" event while START is in flight or being confirmed.
+        if (awaitingStartConfirmation || (pending && pilotRequested)) return false;
+        boolean interrupted = recording && pilotRequested && !pending;
+        recording = false;
         if (interrupted) pilotRequested = false;
         return interrupted;
     }
 
+    synchronized boolean confirmationTimedOut() {
+        if (!awaitingStartConfirmation || recording) return false;
+        awaitingStartConfirmation = false;
+        pilotRequested = false;
+        return true;
+    }
+
     synchronized boolean disconnect() {
-        boolean wasRecording = recording || (pending && pilotRequested);
+        boolean wasRecording = recording || awaitingStartConfirmation || (pending && pilotRequested);
         recording = false;
         pending = false;
+        awaitingStartConfirmation = false;
         pilotRequested = false;
         return wasRecording;
     }
 
     synchronized boolean isRecording() { return recording; }
-    synchronized boolean isRecordingOrStarting() { return recording || (pending && pilotRequested); }
+    synchronized boolean isAwaitingStartConfirmation() { return awaitingStartConfirmation; }
+    synchronized boolean isRecordingOrStarting() {
+        return recording || awaitingStartConfirmation || (pending && pilotRequested);
+    }
 }

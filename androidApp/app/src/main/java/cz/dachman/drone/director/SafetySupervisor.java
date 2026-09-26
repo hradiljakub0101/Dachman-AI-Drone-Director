@@ -50,9 +50,7 @@ public final class SafetySupervisor {
             return SafetyDecision.stop("Časový limit manévru vypršel; je nutné nové schválení.");
         }
         TargetBox target = tracking.targetFor(plan);
-        if (VISUAL_TARGET_GATES_FLIGHT && plan.mode != FlightMode.HOME_APPROACH
-                && (plan.mode.requiresVisualTarget()
-                || (plan.mode != FlightMode.SURVEY_MAP && target != null))) {
+        if (VISUAL_TARGET_GATES_FLIGHT && plan.mode.requiresVisualTarget()) {
             if (!tracking.hasRequiredTargets(plan)) return SafetyDecision.hold("Chybí potvrzený cíl: " + plan.targets.label);
             long oldest = target.observedAtMillis;
             float confidence = target.confidence;

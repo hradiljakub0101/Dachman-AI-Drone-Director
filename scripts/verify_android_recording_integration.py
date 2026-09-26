@@ -33,10 +33,15 @@ def main() -> int:
             "FOTO can change the camera mode while recording starts", errors)
     require("recordingSession.cameraState(state.isRecording())" in dji,
             "Unexpected camera interruption is not monitored", errors)
+    require("RECORDING_CONFIRMATION_MILLIS" in dji
+            and "verifyRecordingStart" in dji
+            and "Záznam potvrzen skutečným stavem kamery DJI." in dji,
+            "REC is shown as started before the DJI camera confirms recording", errors)
     require("stopRecordVideo" not in (ROOT / "androidApp/app/src/main/java/cz/dachman/drone/director/FlightRuntime.java").read_text(encoding="utf-8"),
             "AI flight lifecycle must never stop camera recording", errors)
-    require("postCamera(true)" in dji and "postCamera(false)" in dji,
-            "Successful start/stop does not immediately synchronize UI state", errors)
+    require("postCamera(recordingSession.isRecording())" in dji
+            and "postCamera(false)" in dji,
+            "Camera state is not synchronized from the DJI recording state", errors)
     require("setStorageStateCallBack" in dji and "CameraStorageStatus.evaluate" in dji,
             "Aircraft microSD state is not monitored", errors)
     require("!cameraStorageStatus.ready" in dji,

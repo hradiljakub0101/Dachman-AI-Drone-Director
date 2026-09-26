@@ -85,6 +85,8 @@ final class DjiConnection implements DroneSession {
     private volatile long virtualStickRevision;
     private volatile boolean pilotOverridePending;
     private final RecordingSession recordingSession = new RecordingSession();
+    private volatile Completion pendingRecordingStart;
+    private volatile long recordingVerificationRevision;
     private boolean photoCommandPending;
     private volatile CameraStorageStatus cameraStorageStatus = CameraStorageStatus.disconnected();
     private volatile boolean videoActive;
@@ -129,6 +131,7 @@ final class DjiConnection implements DroneSession {
     private volatile String returnHomeCommandError;
     private volatile boolean returnHomeConfirmedByFlightController;
     private static final long RETURN_HOME_CONFIRMATION_MILLIS = 8_000L;
+    private static final long RECORDING_CONFIRMATION_MILLIS = 5_000L;
 
     private final Runnable connectionRetry = new Runnable() {
         @Override public void run() {
@@ -370,9 +373,22 @@ final class DjiConnection implements DroneSession {
             Camera boundCamera = camera;
             boundCamera.setSystemStateCallback(state -> {
                 if (camera != boundCamera) return;
-                boolean interrupted = recordingSession.cameraState(state.isRecording());
+                boolean interrupted;
+                Completion confirmedStart = null;
+                synchronized (DjiConnection.this) {
+                    interrupted = recordingSession.cameraState(state.isRecording());
+                    if (state.isRecording() && recordingSession.isRecording()) {
+                        recordingVerificationRevision++;
+                        confirmedStart = pendingRecordingStart;
+                        pendingRecordingStart = null;
+                    }
+                }
                 postCamera(recordingSession.isRecording());
-                if (interrupted) postStatus("Nahrávání se v DJI kameře přerušilo. Zkontroluj microSD a stiskni REC pro nové spuštění.");
+                if (confirmedStart != null) {
+                    postCompletion(confirmedStart, true,
+                        "Záznam potvrzen skutečným stavem kamery DJI.");
+                }
+                if (interrupted) postStatus("Kamera DJI ohlásila přerušení záznamu. Aplikace příkaz STOP neposlala; zkontroluj stav kamery a microSD.");
             });
         }
         if (camera != null) camera.setStorageStateCallBack(this::onCameraStorageState);
@@ -571,7 +587,8 @@ final class DjiConnection implements DroneSession {
         String pilotControl = gimbalDialMoved ? "zásah kolečkem gimbalu" : "zásah kniplem";
         if (virtualStickEnabled || virtualStickEnabling) {
             pilotOverridePending = true;
-            postPilotOverride("PILOT OVERRIDE – " + pilotControl + " vypnul AI řízení i kameru.");
+            postPilotOverride("PILOT OVERRIDE – " + pilotControl
+                + " vypnul Virtual Stick. Nahrávání je samostatné a zůstává pod ovládáním REC/STOP.");
             disableVirtualStick("Pilot převzal řízení.", (success, message) -> pilotOverridePending = false);
         } else if (aircraftAction != AircraftAction.NONE) {
             pilotOverridePending = true;
@@ -1412,10 +1429,33 @@ final class DjiConnection implements DroneSession {
                     postCompletion(completion, false, "Spojení s kamerou se změnilo; ověř stav záznamu v DJI.");
                     return;
                 }
-                recordingSession.completed(command, startError == null);
-                if (startError == null) postCamera(true);
-                postCompletion(completion, startError == null,
-                    startError == null ? "Nahrávání spuštěno." : "Nahrávání nelze spustit: " + errorText(startError));
+                boolean confirmed;
+                long verification = -1L;
+                synchronized (DjiConnection.this) {
+                    recordingSession.completed(command, startError == null);
+                    confirmed = startError == null && recordingSession.isRecording();
+                    if (startError == null && !confirmed
+                            && recordingSession.isAwaitingStartConfirmation()) {
+                        pendingRecordingStart = completion;
+                        verification = ++recordingVerificationRevision;
+                    }
+                }
+                postCamera(recordingSession.isRecording());
+                if (startError != null) {
+                    postCompletion(completion, false,
+                        "Nahrávání nelze spustit: " + errorText(startError));
+                } else if (confirmed) {
+                    postCompletion(completion, true,
+                        "Záznam potvrzen stavem kamery DJI.");
+                } else if (verification >= 0L) {
+                    postStatus("Povel REC přijala kamera; čekám na potvrzení, že skutečně nahrává.");
+                    long requestedVerification = verification;
+                    main.postDelayed(() -> verifyRecordingStart(requestedVerification),
+                        RECORDING_CONFIRMATION_MILLIS);
+                } else {
+                    postCompletion(completion, false,
+                        "Kamera nepotvrdila zahájení nahrávání. Ověř microSD a stav kamery.");
+                }
             });
         });
     }
@@ -1450,6 +1490,21 @@ final class DjiConnection implements DroneSession {
                 }
             });
         }
+    }
+
+    private void verifyRecordingStart(long verification) {
+        Completion waiting;
+        synchronized (this) {
+            if (verification != recordingVerificationRevision || pendingRecordingStart == null
+                    || !recordingSession.confirmationTimedOut()) return;
+            waiting = pendingRecordingStart;
+            pendingRecordingStart = null;
+        }
+        postCamera(false);
+        String message = "Kamera nepřešla do stavu nahrávání po přijetí REC. Neber let jako zaznamenaný; "
+            + "zkontroluj microSD a nejdřív ověř krátký klip v DJI Fly.";
+        postStatus(message);
+        postCompletion(waiting, false, message);
     }
 
     @Override public void takePhoto(Completion completion) {
@@ -1502,7 +1557,14 @@ final class DjiConnection implements DroneSession {
         batteryPercent = -1;
         signalPercent = -1;
         lastFlightState = null;
+        Completion unconfirmedRecordingStart = pendingRecordingStart;
+        pendingRecordingStart = null;
+        recordingVerificationRevision++;
         boolean recordingWasActive = recordingSession.disconnect();
+        if (unconfirmedRecordingStart != null) {
+            postCompletion(unconfirmedRecordingStart, false,
+                "DJI se odpojilo před potvrzením záznamu; stav souboru na kartě ověř ručně.");
+        }
         photoCommandPending = false;
         cameraStorageStatus = CameraStorageStatus.disconnected();
         returnHomeStatus = ReturnHomeStatus.missing("Dron není připojen.");
