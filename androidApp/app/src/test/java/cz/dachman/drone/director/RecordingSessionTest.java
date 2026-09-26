@@ -4,12 +4,17 @@ import static org.junit.Assert.*;
 import org.junit.Test;
 
 public final class RecordingSessionTest {
-    @Test public void recStartsWithoutAnyWorkerSelectionOrAiState() {
+    @Test public void recStartsWithoutAnyWorkerSelectionOrAiStateAndWaitsForCameraConfirmation() {
         RecordingSession session = new RecordingSession();
         assertEquals(RecordingSession.Command.START, session.toggle(true, true));
         assertTrue(session.isRecordingOrStarting());
         assertEquals(RecordingSession.Command.BUSY, session.toggle(true, true));
         session.completed(RecordingSession.Command.START, true);
+        assertFalse("SDK command acceptance alone is not proof of recording", session.isRecording());
+        assertTrue(session.isRecordingOrStarting());
+        assertFalse(session.cameraState(false)); // stale state while DJI processes the command
+        assertTrue(session.isRecordingOrStarting());
+        session.cameraState(true);
         assertTrue(session.isRecording());
         assertEquals(RecordingSession.Command.STOP, session.toggle(true, false));
         session.completed(RecordingSession.Command.STOP, true);
@@ -20,11 +25,11 @@ public final class RecordingSessionTest {
         RecordingSession session = new RecordingSession();
         session.toggle(true, true);
         assertTrue(session.isRecordingOrStarting());
-        session.cameraState(true);
         session.completed(RecordingSession.Command.START, true);
         assertTrue(session.isRecordingOrStarting());
-        session.toggle(true, false);
+        session.cameraState(true);
         assertTrue(session.isRecordingOrStarting());
+        assertEquals(RecordingSession.Command.STOP, session.toggle(true, false));
         session.completed(RecordingSession.Command.STOP, true);
         assertFalse(session.isRecordingOrStarting());
     }
@@ -33,6 +38,7 @@ public final class RecordingSessionTest {
         RecordingSession session = new RecordingSession();
         session.toggle(true, true);
         session.completed(RecordingSession.Command.START, true);
+        session.cameraState(true);
         assertTrue(session.cameraState(false));
         assertFalse(session.cameraState(false));
         assertEquals(RecordingSession.Command.STORAGE_MISSING, session.toggle(true, false));
@@ -43,10 +49,21 @@ public final class RecordingSessionTest {
         RecordingSession session = new RecordingSession();
         session.toggle(true, true);
         session.completed(RecordingSession.Command.START, true);
+        session.cameraState(true);
         session.toggle(true, true);
         session.completed(RecordingSession.Command.STOP, false);
         assertTrue(session.isRecording());
         assertEquals(RecordingSession.Command.STOP, session.toggle(true, true));
+    }
+
+    @Test public void missingCameraConfirmationTimesOutWithoutClaimingRecording() {
+        RecordingSession session = new RecordingSession();
+        session.toggle(true, true);
+        session.completed(RecordingSession.Command.START, true);
+        assertTrue(session.confirmationTimedOut());
+        assertFalse(session.isRecording());
+        assertFalse(session.isRecordingOrStarting());
+        assertFalse(session.confirmationTimedOut());
     }
 
     @Test public void disconnectLeavesActualRecordingUnconfirmed() {
