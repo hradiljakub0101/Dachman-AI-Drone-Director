@@ -7,10 +7,10 @@ public enum FlightMode {
     STATIC_TRACK("STATICKÉ SLEDOVÁNÍ", true, false, 120_000),
     FOLLOW("FOLLOW – POHYB ZA CÍLEM", true, false, 60_000),
     DUO_FOLLOW("GROUP MODE", true, true, 60_000),
-    ORBIT_LEFT("ORBIT VLEVO", false, false, 25_000),
-    ORBIT_RIGHT("ORBIT VPRAVO", false, false, 25_000),
-    PULL_AWAY("VZDÁLENÝ ODJEZD", false, false, 10_000),
-    REVEAL_UP("STOUPAVÝ PRŮLET", false, false, 8_000),
+    ORBIT_LEFT("ORBIT VLEVO", false, false, 35_000),
+    ORBIT_RIGHT("ORBIT VPRAVO", false, false, 35_000),
+    PULL_AWAY("VZDÁLENÝ ODJEZD", false, false, 15_000),
+    REVEAL_UP("STOUPAVÝ PRŮLET", false, false, 12_000),
     ROPE_MODE("ROPE TRASA", true, false, 60_000),
     HOME_APPROACH("TEST: PŘIBLÍŽENÍ K HOME", false, false, 45_000);
 
