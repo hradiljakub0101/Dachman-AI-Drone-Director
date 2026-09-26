@@ -270,11 +270,30 @@ public final class FlightRuntimeSimulationTest {
         }
     }
 
+    @Test public void orbitPullAwayAndRevealStartWithoutWorkerTags() {
+        for (FlightMode mode : new FlightMode[]{FlightMode.ORBIT_LEFT, FlightMode.ORBIT_RIGHT,
+                FlightMode.PULL_AWAY, FlightMode.REVEAL_UP}) {
+            try (Rig r = new Rig()) {
+                r.noTargets = true;
+                r.start(mode, TargetSelection.WORKER_ONE);
+                assertTrue(mode + " should not be blocked by missing worker tags: " + r.lastMessage,
+                    r.runtime.isActive());
+                r.step();
+                assertEquals(1, r.session.packets.size());
+                VirtualStickPacket packet = r.session.packets.get(0);
+                assertTrue(mode + " should issue a non-zero camera move",
+                    Math.abs(packet.pitch) > 0 || Math.abs(packet.roll) > 0
+                        || Math.abs(packet.yaw) > 0 || Math.abs(packet.vertical) > 0);
+            }
+        }
+    }
+
     private static final class Rig implements AutoCloseable {
         long time = 10_000;
         int battery = 80;
         boolean flying = true, home = true, connected = true, location = true, rth;
         boolean refreshTarget = true;
+        boolean noTargets;
         TargetSelection selection = TargetSelection.WORKER_ONE;
         String lastMessage;
         final World world = new World();
@@ -298,6 +317,7 @@ public final class FlightRuntimeSimulationTest {
         }
 
         TrackingSnapshot tracking() {
+            if (noTargets) return new TrackingSnapshot(Collections.emptyList(), null, null, time);
             TargetBox first = world.project(time);
             TargetBox second = new TargetBox(first.left + .05f, first.top,
                 first.right + .05f, first.bottom, .9f, time);
