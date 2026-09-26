@@ -680,6 +680,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private void requestMode(FlightMode mode) {
         if (authority.manualRearmRequired()) {
             showStatus("Pilot převzal řízení. Nejdřív stiskni RUČNĚ PŘIPRAVIT AI ZNOVU.");
+            revealControlDrawer();
             return;
         }
         FlightPlan candidate = selectedPlan(mode);
@@ -691,6 +692,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         if (mode.requiresPrimary && (tracker == null
                 || !tracker.snapshot().hasRequiredTargets(candidate))) {
             showStatus("Nejprve označ zvolený cíl: " + selectedTargets.label);
+            revealControlDrawer();
             return;
         }
         SafetyDecision readiness = runtime.preflight(candidate);
@@ -716,7 +718,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         readinessCheck.setVisibility(View.GONE);
         readinessCheck.setChecked(false);
         approvalCard.setVisibility(View.GONE);
-        showStatus("Ověř vybraný režim jedním systémovým potvrzením.");
+        showStatus("Potvrď vybraný režim: " + mode.label + ".");
         authenticate();
     }
 
