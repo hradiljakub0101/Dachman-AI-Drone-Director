@@ -288,6 +288,23 @@ public final class FlightRuntimeSimulationTest {
         }
     }
 
+    @Test public void quickCompositionModesKeepMovingForTwelveSimulatedSecondsAndCanBeHeld() {
+        for (FlightMode mode : new FlightMode[]{FlightMode.ORBIT_LEFT, FlightMode.ORBIT_RIGHT,
+                FlightMode.PULL_AWAY, FlightMode.REVEAL_UP}) {
+            try (Rig r = new Rig()) {
+                r.noTargets = true;
+                r.start(mode, TargetSelection.WORKER_ONE);
+                for (int i = 0; i < 120; i++) r.step();
+                assertTrue(mode + " should still be active for the longer shot", r.runtime.isActive());
+                assertTrue(mode + " should accumulate visible movement",
+                    Math.abs(r.world.east) + Math.abs(r.world.north)
+                        + Math.abs(r.world.altitude - 10) + Math.abs(r.world.yaw) > 0.5);
+                r.runtime.hold("Pilot ended the shot");
+                assertFalse(r.runtime.isActive());
+            }
+        }
+    }
+
     private static final class Rig implements AutoCloseable {
         long time = 10_000;
         int battery = 80;
