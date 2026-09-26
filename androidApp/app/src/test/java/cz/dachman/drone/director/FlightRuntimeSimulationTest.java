@@ -392,6 +392,7 @@ public final class FlightRuntimeSimulationTest {
             assertTrue(command == RecordingSession.Command.START || command == RecordingSession.Command.STOP);
             recordingCommands++;
             recording.completed(command, true);
+            recording.cameraState(command == RecordingSession.Command.START);
             done.onComplete(true, "Simulated camera ACK");
         }
         @Override public void takePhoto(Completion done) { throw new AssertionError("Not a camera simulator"); }
