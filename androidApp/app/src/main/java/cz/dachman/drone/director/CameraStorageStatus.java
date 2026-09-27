@@ -63,9 +63,9 @@ public final class CameraStorageStatus {
     }
 
     private static String capacityDetail(int remainingSpaceMB) {
-        if (remainingSpaceMB < 0) return "\\nVolné místo: DJI SDK ho neposkytlo.";
+        if (remainingSpaceMB < 0) return "\nVolné místo: DJI SDK ho neposkytlo.";
         return String.format(java.util.Locale.getDefault(),
-            "\\nVolné místo: %.1f GB", remainingSpaceMB / 1024.0d);
+            "\nVolné místo: %.1f GB", remainingSpaceMB / 1024.0d);
     }
 
     private static CameraStorageStatus blockedWithSpace(String label, String detail,
