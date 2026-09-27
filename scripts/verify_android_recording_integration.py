@@ -58,6 +58,12 @@ def main() -> int:
             "Recording is not blocked when the aircraft microSD card is unavailable", errors)
     require("onCameraStorageState" in session and "onCameraStorageState" in ui,
             "Aircraft microSD status is not exposed in the UI", errors)
+    require("onCameraDiagnostics(String details)" in session
+            and "onCameraDiagnostics(String details)" in ui
+            and "postCameraDiagnostics" in dji
+            and "REC DJI CONFIRMED" in dji
+            and "REC DJI INTERRUPTED" in dji,
+            "Camera panel does not expose live start, confirmation and interruption diagnostics", errors)
     require("toggleRecording(Completion completion)" in demo,
             "Demo flavor does not implement the recording contract", errors)
 
