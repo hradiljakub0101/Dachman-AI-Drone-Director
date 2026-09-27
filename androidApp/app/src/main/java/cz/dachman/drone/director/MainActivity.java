@@ -123,6 +123,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private boolean aircraftActionActive;
     private boolean cameraAutomationActive;
     private boolean cameraRecording;
+    private boolean cameraConnected;
     private boolean cameraBackupActive;
     private boolean cameraRecordingPending;
     private String cameraBackupDetail = "Záložní záznam telefonu není spuštěný.";
@@ -1040,6 +1041,12 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         });
     }
 
+    @Override public void onCameraConnectionState(boolean connected) {
+        ui(() -> {
+            cameraConnected = connected;
+        });
+    }
+
     @Override public void onCameraRecordingPending(boolean pending) {
         ui(() -> {
             cameraRecordingPending = pending;
@@ -1140,7 +1147,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     }
 
     private void showCameraDiagnostics() {
-        String message = "Kamera: " + (telemetry.connected ? "připojena" : "neověřena / odpojena")
+        String message = "Kamera: " + (cameraConnected ? "připojena" : "odpojena / neověřena")
             + "\nREC čeká na potvrzení: " + (cameraRecordingPending ? "ANO" : "NE")
             + "\nCamera SystemState.isRecording: " + (cameraRecording ? "TRUE" : "FALSE")
             + "\n" + cameraStorageStatus.detail
