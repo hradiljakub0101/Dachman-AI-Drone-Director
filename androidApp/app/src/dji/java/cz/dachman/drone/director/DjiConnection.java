@@ -409,7 +409,7 @@ final class DjiConnection implements DroneSession {
         cameraStorageStatus = CameraStorageStatus.evaluate(
             state.isInserted(), state.isInitializing(), state.isReadOnly(), state.isFormatted(),
             state.isFormatting(), state.isFull(), state.isVerified(), state.hasError(),
-            state.getAvailableRecordingTimeInSeconds());
+            state.getAvailableRecordingTimeInSeconds(), state.getRemainingSpaceInMB());
         postCameraStorage();
         if (recordingSession.isRecording() && !cameraStorageStatus.ready) {
             postStatus("VAROVÁNÍ ZÁZNAMU: " + cameraStorageStatus.detail);
@@ -1101,8 +1101,8 @@ final class DjiConnection implements DroneSession {
             failReturnHomePreparation(completion, "Home Point nebo RTH výška se nepodařilo ověřit.");
             return;
         }
-        String message = "Home Point a RTH výška jsou ověřené v DJI. Návrat se ověřuje až za letu "
-            + "více než 20 m od Home; Mini 2 při bližším RTH zůstává viset. "
+        String message = recordingFailureDiagnostic(camera, "VIDEO_NORMAL", "SUCCESS",
+            "FALSE", cameraStorageStatus.detail) + "\\nREC DJI FAILED: isRecording zůstalo FALSE."; Mini 2 při bližším RTH zůstává viset. "
             + (warning == null || warning.isEmpty() ? returnHomeStatus.detail : warning);
         postCompletion(completion, true, message);
     }
@@ -1414,18 +1414,23 @@ final class DjiConnection implements DroneSession {
             });
             return;
         }
-        setNormalVideoMode(current, error -> {
+        setNormalVideoMode(current, (verified, mode, detail) -> {
             if (camera != current) {
+                recordingSession.completed(command, false);
                 postCompletion(completion, false, "Spojení s kamerou se změnilo; ověř stav záznamu v DJI.");
                 return;
             }
-            if (error != null) {
+            if (!verified || !cameraStorageStatus.ready) {
                 recordingSession.completed(command, false);
-                postCompletion(completion, false, "Režim videa nelze nastavit: " + errorText(error));
+                String failure = recordingFailureDiagnostic(current, mode, "NEPROVEDENO",
+                    "FALSE", verified ? cameraStorageStatus.detail : detail);
+                postStatus(failure);
+                postCompletion(completion, false, failure);
                 return;
             }
             current.startRecordVideo(startError -> {
                 if (camera != current) {
+                    recordingSession.completed(command, false);
                     postCompletion(completion, false, "Spojení s kamerou se změnilo; ověř stav záznamu v DJI.");
                     return;
                 }
@@ -1442,69 +1447,121 @@ final class DjiConnection implements DroneSession {
                 }
                 postCamera(recordingSession.isRecording());
                 if (startError != null) {
-                    postCompletion(completion, false,
-                        "Nahrávání nelze spustit: " + errorText(startError));
+                    String failure = recordingFailureDiagnostic(current, mode,
+                        "FAILED: " + errorText(startError), "FALSE", cameraStorageStatus.detail);
+                    postStatus(failure);
+                    postCompletion(completion, false, failure);
                 } else if (confirmed) {
-                    postCompletion(completion, true,
-                        "Záznam potvrzen stavem kamery DJI.");
+                    postCompletion(completion, true, "Záznam potvrzen stavem kamery DJI.");
                 } else if (verification >= 0L) {
-                    postStatus("Povel REC přijala kamera; čekám na potvrzení, že skutečně nahrává.");
+                    postStatus("REC DJI — čekám na potvrzení isRecording ze SystemState.");
                     long requestedVerification = verification;
                     main.postDelayed(() -> verifyRecordingStart(requestedVerification),
                         RECORDING_CONFIRMATION_MILLIS);
                 } else {
-                    postCompletion(completion, false,
-                        "Kamera nepotvrdila zahájení nahrávání. Ověř microSD a stav kamery.");
+                    String failure = recordingFailureDiagnostic(current, mode,
+                        "SUCCESS", "FALSE", cameraStorageStatus.detail);
+                    postStatus(failure);
+                    postCompletion(completion, false, failure);
                 }
             });
         });
     }
 
-    /** Mini 2 firmware uses Flat Camera Mode when the SDK reports it as available. */
-    private void setNormalVideoMode(Camera current,
-            dji.common.util.CommonCallbacks.CompletionCallback<DJIError> completion) {
-        boolean flatModeSupported;
+    private String recordingFailureDiagnostic(Camera current, String mode, String startResult,
+            String recordingState, String storageDetail) {
+        String cameraState = current != null && current.isConnected() ? "připojena" : "odpojena";
+        return "REC DJI FAILED\\nKamera: " + cameraState
+            + "\\nRežim: " + mode
+            + "\\n" + storageDetail
+            + "\\nstartRecordVideo: " + startResult
+            + "\\nisRecording: " + recordingState;
+    }
+
+    private interface RecordingModeResult {
+        void onResult(boolean verified, String mode, String detail);
+    }
+
+    /** Mode must be read back successfully before the camera receives REC. */
+    private void setNormalVideoMode(Camera current, RecordingModeResult completion) {
+        final boolean flatSupported;
         try {
-            flatModeSupported = current.isFlatCameraModeSupported();
-        } catch (RuntimeException ignored) {
-            flatModeSupported = false;
+            flatSupported = current.isFlatCameraModeSupported();
+        } catch (RuntimeException error) {
+            completion.onResult(false, "NEZNÁMÝ", "Nelze zjistit režim kamery: " + safeError(error));
+            return;
         }
-        if (flatModeSupported) {
+        if (flatSupported) {
             current.getFlatMode(new CommonCallbacks.CompletionCallbackWith<SettingsDefinitions.FlatCameraMode>() {
-                @Override public void onSuccess(SettingsDefinitions.FlatCameraMode mode) {
-                    if (mode == SettingsDefinitions.FlatCameraMode.VIDEO_NORMAL) completion.onResult(null);
-                    else current.setFlatMode(SettingsDefinitions.FlatCameraMode.VIDEO_NORMAL, completion);
+                @Override public void onSuccess(SettingsDefinitions.FlatCameraMode currentMode) {
+                    if (currentMode == SettingsDefinitions.FlatCameraMode.VIDEO_NORMAL) {
+                        verifyFlatVideoMode(current, completion);
+                        return;
+                    }
+                    current.setFlatMode(SettingsDefinitions.FlatCameraMode.VIDEO_NORMAL, error -> {
+                        if (error != null) completion.onResult(false, currentMode.name(),
+                            "Nastavení VIDEO_NORMAL selhalo: " + errorText(error));
+                        else verifyFlatVideoMode(current, completion);
+                    });
                 }
                 @Override public void onFailure(DJIError error) {
-                    current.setFlatMode(SettingsDefinitions.FlatCameraMode.VIDEO_NORMAL, completion);
+                    completion.onResult(false, "NEČITELNÝ",
+                        "Načtení FlatCameraMode selhalo: " + errorText(error));
                 }
             });
         } else {
             current.getMode(new CommonCallbacks.CompletionCallbackWith<SettingsDefinitions.CameraMode>() {
-                @Override public void onSuccess(SettingsDefinitions.CameraMode mode) {
-                    if (mode == SettingsDefinitions.CameraMode.RECORD_VIDEO) completion.onResult(null);
-                    else current.setMode(SettingsDefinitions.CameraMode.RECORD_VIDEO, completion);
+                @Override public void onSuccess(SettingsDefinitions.CameraMode currentMode) {
+                    if (currentMode == SettingsDefinitions.CameraMode.RECORD_VIDEO) {
+                        verifyCameraVideoMode(current, completion);
+                        return;
+                    }
+                    current.setMode(SettingsDefinitions.CameraMode.RECORD_VIDEO, error -> {
+                        if (error != null) completion.onResult(false, currentMode.name(),
+                            "Nastavení RECORD_VIDEO selhalo: " + errorText(error));
+                        else verifyCameraVideoMode(current, completion);
+                    });
                 }
                 @Override public void onFailure(DJIError error) {
-                    current.setMode(SettingsDefinitions.CameraMode.RECORD_VIDEO, completion);
+                    completion.onResult(false, "NEČITELNÝ",
+                        "Načtení CameraMode selhalo: " + errorText(error));
                 }
             });
         }
     }
 
-    private void verifyRecordingStart(long verification) {
-        Completion waiting;
-        synchronized (this) {
-            if (verification != recordingVerificationRevision || pendingRecordingStart == null
-                    || !recordingSession.confirmationTimedOut()) return;
-            waiting = pendingRecordingStart;
-            pendingRecordingStart = null;
-        }
-        postCamera(false);
-        String message = "Kamera nepřešla do stavu nahrávání po přijetí REC. Neber let jako zaznamenaný; "
-            + "zkontroluj microSD a nejdřív ověř krátký klip v DJI Fly.";
-        postStatus(message);
-        postCompletion(waiting, false, message);
+    private void verifyFlatVideoMode(Camera current, RecordingModeResult completion) {
+        current.getFlatMode(new CommonCallbacks.CompletionCallbackWith<SettingsDefinitions.FlatCameraMode>() {
+            @Override public void onSuccess(SettingsDefinitions.FlatCameraMode mode) {
+                if (mode != SettingsDefinitions.FlatCameraMode.VIDEO_NORMAL) {
+                    completion.onResult(false, mode == null ? "NEZNÁMÝ" : mode.name(),
+                        "Zpětné načtení FlatCameraMode nepotvrdilo VIDEO_NORMAL.");
+                } else settleCameraBeforeRecording(completion, mode.name());
+            }
+            @Override public void onFailure(DJIError error) {
+                completion.onResult(false, "NEČITELNÝ",
+                    "Zpětné načtení FlatCameraMode selhalo: " + errorText(error));
+            }
+        });
+    }
+
+    private void verifyCameraVideoMode(Camera current, RecordingModeResult completion) {
+        current.getMode(new CommonCallbacks.CompletionCallbackWith<SettingsDefinitions.CameraMode>() {
+            @Override public void onSuccess(SettingsDefinitions.CameraMode mode) {
+                if (mode != SettingsDefinitions.CameraMode.RECORD_VIDEO) {
+                    completion.onResult(false, mode == null ? "NEZNÁMÝ" : mode.name(),
+                        "Zpětné načtení CameraMode nepotvrdilo RECORD_VIDEO.");
+                } else settleCameraBeforeRecording(completion, mode.name());
+            }
+            @Override public void onFailure(DJIError error) {
+                completion.onResult(false, "NEČITELNÝ",
+                    "Zpětné načtení CameraMode selhalo: " + errorText(error));
+            }
+        });
+    }
+
+    private void settleCameraBeforeRecording(RecordingModeResult completion, String mode) {
+        main.postDelayed(() -> completion.onResult(true, mode, null), 350L);
     }
 
     @Override public void takePhoto(Completion completion) {
