@@ -123,6 +123,8 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private boolean aircraftActionActive;
     private boolean cameraAutomationActive;
     private boolean cameraRecording;
+    private boolean cameraBackupActive;
+    private String cameraBackupDetail = "Záložní záznam telefonu není spuštěný.";
     private CameraStorageStatus cameraStorageStatus = CameraStorageStatus.disconnected();
     private ReturnHomeStatus returnHomeStatus = ReturnHomeStatus.missing(
         "Před vzletem ulož návratový bod.");
@@ -261,7 +263,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         cameraStorageBadge = text("SD —", 8, Color.WHITE, true);
         cameraStorageBadge.setGravity(Gravity.CENTER);
         cameraStorageBadge.setBackground(card(Color.argb(190, 17, 48, 61), 8, MUTED));
-        cameraStorageBadge.setOnClickListener(view -> showStatus(cameraStorageStatus.detail));
+        cameraStorageBadge.setOnClickListener(view -> showCameraDiagnostics());
         LinearLayout.LayoutParams storageParams = new LinearLayout.LayoutParams(dp(52), dp(34));
         storageParams.setMargins(dp(4), 0, 0, 0);
         topHud.addView(cameraStorageBadge, storageParams);
@@ -1037,6 +1039,14 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         });
     }
 
+    @Override public void onCameraBackupState(boolean active, String detail) {
+        ui(() -> {
+            cameraBackupActive = active;
+            cameraBackupDetail = detail == null ? "" : detail;
+            renderRecordingUi();
+        });
+    }
+
     @Override public void onCameraStorageState(CameraStorageStatus status) {
         if (status == null) return;
         ui(() -> {
@@ -1103,10 +1113,12 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     }
 
     private void renderRecordingUi() {
-        boolean recordControlAvailable = cameraRecording || cameraStorageStatus.ready;
+        boolean anyRecording = cameraRecording || cameraBackupActive;
+        boolean recordControlAvailable = anyRecording || cameraStorageStatus.ready;
         recordButton.setEnabled(recordControlAvailable);
-        recordButton.setText(cameraRecording ? "■ STOP" : "● REC");
-        styleButton(recordButton, cameraRecording ? ORANGE
+        recordButton.setText(cameraRecording ? (cameraBackupActive ? "■ SD+TEL" : "■ STOP")
+            : cameraBackupActive ? "■ TEL" : "● REC");
+        styleButton(recordButton, anyRecording ? ORANGE
             : cameraStorageStatus.ready ? RED : PANEL_LIGHT);
 
         cameraStorageBadge.setText(cameraStorageStatus.shortLabel);
@@ -1114,7 +1126,21 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         int storageColor = cameraStorageStatus.ready ? GREEN
             : "SD …".equals(cameraStorageStatus.shortLabel) ? ORANGE : RED;
         cameraStorageBadge.setBackground(card(storageColor, 8, storageColor));
-        cameraStorageBadge.setContentDescription(cameraStorageStatus.detail);
+        cameraStorageBadge.setContentDescription(cameraStorageStatus.detail
+            + " Phone backup: " + cameraBackupDetail);
+    }
+
+    private void showCameraDiagnostics() {
+        String message = "Kamera: " + (telemetry.connected ? "připojena" : "neověřena / odpojena")
+            + "\\nCamera SystemState.isRecording: " + (cameraRecording ? "TRUE" : "FALSE")
+            + "\\n" + cameraStorageStatus.detail
+            + "\\nPhone backup: " + (cameraBackupActive ? "AKTIVNÍ" : "NEAKTIVNÍ")
+            + "\\n" + cameraBackupDetail;
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("DIAGNOSTIKA KAMERY A ÚLOŽIŠTĚ")
+            .setMessage(message)
+            .setPositiveButton("ZAVŘÍT", null)
+            .show();
     }
 
     @Override public void onCameraAutomationState(boolean digitalZoomSupported,
