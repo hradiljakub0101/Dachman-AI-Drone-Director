@@ -1514,3 +1514,132 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     private void ui(Runnable action) {
         if (Looper.myLooper() == Looper.getMainLooper()) action.run();
+        else runOnUiThread(action);
+    }
+
+    private static String targetLabel(TargetBox box) {
+        return box == null ? "—" : Math.round(box.confidence * 100f) + "%";
+    }
+
+    private static String safe(RuntimeException error) {
+        return error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+    }
+
+    private void section(LinearLayout parent, String label) {
+        TextView view = text(label, 11, CYAN, true);
+        view.setPadding(0, dp(12), 0, dp(4));
+        parent.addView(view);
+    }
+
+    private LinearLayout row() {
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.HORIZONTAL);
+        layout.setGravity(Gravity.CENTER_VERTICAL);
+        return layout;
+    }
+
+    private LinearLayout column() {
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        return layout;
+    }
+
+    private GridLayout grid() {
+        GridLayout grid = new GridLayout(this);
+        grid.setColumnCount(2);
+        grid.setUseDefaultMargins(false);
+        return grid;
+    }
+
+    private TextView text(String value, float size, int color, boolean bold) {
+        TextView view = new TextView(this);
+        view.setText(value);
+        view.setTextSize(size);
+        view.setTextColor(color);
+        view.setGravity(Gravity.CENTER_VERTICAL);
+        if (bold) view.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        return view;
+    }
+
+    private Button button(String label, int color, Runnable action) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setTextSize(10);
+        button.setTextColor(color == CYAN || color == GREEN || color == ORANGE ? BACKGROUND : Color.WHITE);
+        button.setAllCaps(false);
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(dp(8), 0, dp(8), 0);
+        button.setOnClickListener(view -> action.run());
+        styleButton(button, color);
+        return button;
+    }
+
+    private void styleButton(Button button, int color) {
+        if (button == null) return;
+        int alpha = color == RED ? 175 : color == ORANGE ? 135 : 95;
+        int translucent = Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color));
+        button.setBackgroundTintList(null);
+        button.setBackground(card(translucent, 8, color));
+        button.setTextColor(Color.WHITE);
+        button.setElevation(0f);
+        button.setAlpha(button.isEnabled() ? 1f : 0.45f);
+    }
+
+    private LinearLayout.LayoutParams compactButtonParams(int width) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(width, dp(36));
+        params.setMargins(dp(4), 0, 0, 0);
+        return params;
+    }
+
+    private LinearLayout.LayoutParams buttonParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(42));
+        params.setMargins(dp(6), 0, 0, 0);
+        return params;
+    }
+
+    private LinearLayout.LayoutParams weightedButtonParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(47), 1f);
+        params.setMargins(dp(3), dp(3), dp(3), dp(3));
+        return params;
+    }
+
+    private LinearLayout.LayoutParams fullButtonParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(47));
+        params.setMargins(dp(3), dp(3), dp(3), dp(3));
+        return params;
+    }
+
+    private GradientDrawable card(int fill, float radiusDp, int stroke) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(fill);
+        drawable.setCornerRadius(dp(radiusDp));
+        drawable.setStroke(dp(1), stroke);
+        return drawable;
+    }
+
+    private int dp(float value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private static final class DarkSpinnerAdapter<T> extends ArrayAdapter<T> {
+        DarkSpinnerAdapter(Context context, T[] values) {
+            super(context, android.R.layout.simple_spinner_item, values);
+            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        }
+
+        @Override public View getView(int position, View convertView, ViewGroup parent) {
+            TextView view = (TextView) super.getView(position, convertView, parent);
+            view.setTextColor(Color.WHITE);
+            view.setTextSize(12);
+            return view;
+        }
+
+        @Override public View getDropDownView(int position, View convertView, ViewGroup parent) {
+            TextView view = (TextView) super.getDropDownView(position, convertView, parent);
+            view.setTextColor(Color.WHITE);
+            view.setBackgroundColor(PANEL_LIGHT);
+            view.setPadding(20, 18, 20, 18);
+            return view;
+        }
+    }
+}
