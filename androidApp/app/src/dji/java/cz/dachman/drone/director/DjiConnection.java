@@ -388,10 +388,12 @@ final class DjiConnection implements DroneSession {
                         recordingVerificationRevision++;
                         confirmedStart = pendingRecordingStart;
                         pendingRecordingStart = null;
+                        if (confirmedStart != null) recordingStartPending = false;
                     }
                 }
                 postCamera(recordingSession.isRecording());
                 if (confirmedStart != null) {
+                    postCameraRecordingPending(false);
                     postCompletion(confirmedStart, true,
                         "Záznam potvrzen skutečným stavem kamery DJI.");
                 }
