@@ -87,6 +87,7 @@ final class DjiConnection implements DroneSession {
     private final RecordingSession recordingSession = new RecordingSession();
     private final PhoneH264Backup phoneBackup;
     private volatile Completion pendingRecordingStart;
+    private volatile boolean recordingStartPending;
     private volatile long recordingVerificationRevision;
     private boolean photoCommandPending;
     private volatile CameraStorageStatus cameraStorageStatus = CameraStorageStatus.disconnected();
@@ -193,6 +194,7 @@ final class DjiConnection implements DroneSession {
         this.listener = listener;
         postTelemetry();
         postCamera(recordingSession.isRecording());
+        postCameraRecordingPending(recordingStartPending);
         postCameraBackupState();
         postCameraStorage();
         postCameraAutomation();
@@ -1461,6 +1463,8 @@ final class DjiConnection implements DroneSession {
             return;
         }
         boolean backupStarted = videoActive && phoneBackup.start();
+        recordingStartPending = true;
+        postCameraRecordingPending(true);
         if (backupStarted) postCameraBackupState();
         else if (videoActive) postStatus("Telefonní záloha selhala: " + phoneBackup.lastError()
             + ". Primární záznam na microSD pokračuje.");
@@ -1468,11 +1472,15 @@ final class DjiConnection implements DroneSession {
         setNormalVideoMode(current, (verified, mode, detail) -> {
             if (camera != current) {
                 recordingSession.completed(command, false);
+                recordingStartPending = false;
+                postCameraRecordingPending(false);
                 postCompletion(completion, false, "Spojení s kamerou se změnilo; ověř skutečný stav v DJI.");
                 return;
             }
             if (!verified || !cameraStorageStatus.ready) {
                 recordingSession.completed(command, false);
+                recordingStartPending = false;
+                postCameraRecordingPending(false);
                 String failure = recordingFailureDiagnostic(current, mode, "NEPROVEDENO",
                     "FALSE", verified ? cameraStorageStatus.detail : detail);
                 postStatus(failure);
@@ -1485,6 +1493,8 @@ final class DjiConnection implements DroneSession {
             current.startRecordVideo(startError -> {
                 if (camera != current) {
                     recordingSession.completed(command, false);
+                    recordingStartPending = false;
+                    postCameraRecordingPending(false);
                     postCompletion(completion, false, "Spojení s kamerou se změnilo; ověř skutečný stav v DJI.");
                     return;
                 }
@@ -1501,6 +1511,8 @@ final class DjiConnection implements DroneSession {
                 }
                 postCamera(recordingSession.isRecording());
                 if (startError != null) {
+                    recordingStartPending = false;
+                    postCameraRecordingPending(false);
                     String failure = recordingFailureDiagnostic(current, mode,
                         "FAILED: " + errorText(startError), "FALSE", cameraStorageStatus.detail);
                     postStatus(failure);
@@ -1509,6 +1521,8 @@ final class DjiConnection implements DroneSession {
                             "SD REC FAILED — PHONE BACKUP H.264 pokračuje: " + phoneBackup.displayName());
                     } else postCompletion(completion, false, failure);
                 } else if (confirmed) {
+                    recordingStartPending = false;
+                    postCameraRecordingPending(false);
                     postCompletion(completion, true, backupStarted
                         ? "SD záznam potvrzen; telefonní H.264 záloha běží."
                         : "SD záznam potvrzen; telefonní záloha není aktivní.");
@@ -1518,6 +1532,8 @@ final class DjiConnection implements DroneSession {
                     main.postDelayed(() -> verifyRecordingStart(requestedVerification),
                         RECORDING_CONFIRMATION_MILLIS);
                 } else {
+                    recordingStartPending = false;
+                    postCameraRecordingPending(false);
                     String failure = recordingFailureDiagnostic(current, mode,
                         "SUCCESS", "FALSE", cameraStorageStatus.detail);
                     postStatus(failure);
@@ -1634,6 +1650,8 @@ final class DjiConnection implements DroneSession {
             waiting = pendingRecordingStart;
             pendingRecordingStart = null;
         }
+        recordingStartPending = false;
+        postCameraRecordingPending(false);
         postCamera(false);
         String message = recordingFailureDiagnostic(camera, "VIDEO_NORMAL", "SUCCESS",
             "FALSE", cameraStorageStatus.detail) + "\\nREC DJI FAILED: isRecording zůstalo FALSE.";
@@ -1834,6 +1852,10 @@ final class DjiConnection implements DroneSession {
 
     private void postCamera(boolean isRecording) {
         main.post(() -> { if (!closed && listener != null) listener.onCameraState(isRecording); });
+    }
+
+    private void postCameraRecordingPending(boolean pending) {
+        main.post(() -> { if (!closed && listener != null) listener.onCameraRecordingPending(pending); });
     }
 
     private void postCameraBackupState() {
