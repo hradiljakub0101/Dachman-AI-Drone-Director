@@ -43,14 +43,14 @@ public final class CameraStorageStatus {
     public static CameraStorageStatus evaluate(boolean inserted, boolean initializing,
             boolean readOnly, boolean formatted, boolean formatting, boolean full,
             boolean verified, boolean hasError, int remainingRecordingSeconds, int remainingSpaceMB) {
-        if (!inserted) return blocked("SD CHYBÍ", "V dronu není vložená microSD karta.");
-        if (initializing) return blocked("SD START", "MicroSD karta se inicializuje.");
-        if (formatting) return blocked("SD FORMÁT", "Probíhá formátování microSD karty.");
-        if (hasError) return blocked("SD CHYBA", "DJI kamera hlásí chybu microSD karty.");
-        if (readOnly) return blocked("SD ZÁMEK", "MicroSD karta je pouze pro čtení.");
-        if (!formatted) return blocked("SD FORMÁT", "MicroSD karta není naformátovaná.");
+        if (!inserted) return blockedWithSpace("SD CHYBÍ", "V dronu není vložená microSD karta.", remainingSpaceMB);
+        if (initializing) return blockedWithSpace("SD START", "MicroSD karta se inicializuje.", remainingSpaceMB);
+        if (formatting) return blockedWithSpace("SD FORMÁT", "Probíhá formátování microSD karty.", remainingSpaceMB);
+        if (hasError) return blockedWithSpace("SD CHYBA", "DJI kamera hlásí chybu microSD karty.", remainingSpaceMB);
+        if (readOnly) return blockedWithSpace("SD ZÁMEK", "MicroSD karta je pouze pro čtení.", remainingSpaceMB);
+        if (!formatted) return blockedWithSpace("SD FORMÁT", "MicroSD karta není naformátovaná.", remainingSpaceMB);
         if (full || remainingRecordingSeconds == 0) {
-            return blocked("SD PLNÁ", "Na microSD kartě není místo pro další video.");
+            return blockedWithSpace("SD PLNÁ", "Na microSD kartě není místo pro další video.", remainingSpaceMB);
         }
 
         int seconds = Math.max(UNKNOWN_REMAINING_SECONDS, remainingRecordingSeconds);
@@ -66,6 +66,11 @@ public final class CameraStorageStatus {
         if (remainingSpaceMB < 0) return "\\nVolné místo: DJI SDK ho neposkytlo.";
         return String.format(java.util.Locale.getDefault(),
             "\\nVolné místo: %.1f GB", remainingSpaceMB / 1024.0d);
+    }
+
+    private static CameraStorageStatus blockedWithSpace(String label, String detail,
+            int remainingSpaceMB) {
+        return blocked(label, detail + capacityDetail(remainingSpaceMB), remainingSpaceMB);
     }
 
     private static CameraStorageStatus blocked(String label, String detail) {
