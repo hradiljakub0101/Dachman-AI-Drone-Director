@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 final class PhoneH264Backup {
     private static final int MAX_QUEUED_PACKETS = 512;
     private final Context context;
+    private final Runnable failureListener;
     private final ArrayBlockingQueue<byte[]> packets = new ArrayBlockingQueue<>(MAX_QUEUED_PACKETS);
     private volatile boolean accepting;
     private volatile String lastError;
@@ -29,8 +30,9 @@ final class PhoneH264Backup {
     private volatile Uri contentUri;
     private Thread writer;
 
-    PhoneH264Backup(Context context) {
+    PhoneH264Backup(Context context, Runnable failureListener) {
         this.context = context.getApplicationContext();
+        this.failureListener = failureListener;
     }
 
     synchronized boolean start() {
@@ -79,6 +81,7 @@ final class PhoneH264Backup {
         if (!packets.offer(copy)) {
             lastError = "Záložní zápis nestíhá přenos; soubor může být neúplný.";
             accepting = false;
+            failureListener.run();
         }
     }
 
@@ -108,6 +111,7 @@ final class PhoneH264Backup {
         } catch (Exception error) {
             lastError = "Zápis H.264 do telefonu selhal: " + safeMessage(error);
             accepting = false;
+            failureListener.run();
         } finally {
             ContentValues completed = new ContentValues();
             completed.put(MediaStore.Downloads.IS_PENDING, 0);
