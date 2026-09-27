@@ -85,7 +85,7 @@ final class DjiConnection implements DroneSession {
     private volatile long virtualStickRevision;
     private volatile boolean pilotOverridePending;
     private final RecordingSession recordingSession = new RecordingSession();
-    private final PhoneH264Backup phoneBackup;
+    private PhoneH264Backup phoneBackup;
     private volatile Completion pendingRecordingStart;
     private volatile boolean recordingStartPending;
     private volatile long recordingVerificationRevision;
