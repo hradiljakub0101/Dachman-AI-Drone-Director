@@ -11,6 +11,10 @@ public interface DroneSession {
         void onVideoState(boolean active);
         void onPilotOverride(String reason);
         void onCameraState(boolean recording);
+        void onCameraBackupState(boolean active, String detail);
+        void onCameraRecordingPending(boolean pending);
+        void onCameraConnectionState(boolean connected);
+        void onCameraDiagnostics(String details);
         void onCameraStorageState(CameraStorageStatus status);
         void onCameraAutomationState(boolean digitalZoomSupported, float appliedZoomFactor);
         void onAircraftAction(String action, boolean active);

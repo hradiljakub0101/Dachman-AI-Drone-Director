@@ -27,6 +27,16 @@ def main() -> int:
             "Flat Camera Mode is not used for Mini 2 firmware", errors)
     require("startRecordVideo" in dji and "stopRecordVideo" in dji,
             "DJI start/stop recording callbacks are incomplete", errors)
+    require("current.getFlatMode" in dji and "verifyFlatVideoMode" in dji
+            and "verifyCameraVideoMode" in dji and "settleCameraBeforeRecording" in dji,
+            "Camera mode is not read back and stabilized before REC", errors)
+    require("REC DJI FAILED" in dji and "recordingFailureDiagnostic" in dji,
+            "Recording failure does not expose camera, mode, SD and callback diagnostics", errors)
+    require("PhoneH264Backup" in dji and "phoneBackup.offer(bytes, size)" in dji,
+            "Phone-side DJI stream backup is not connected to the received feed", errors)
+    require("Downloads" in (ROOT / "androidApp/app/src/main/java/cz/dachman/drone/director/PhoneH264Backup.java").read_text(encoding="utf-8")
+            and ".h264" in (ROOT / "androidApp/app/src/main/java/cz/dachman/drone/director/PhoneH264Backup.java").read_text(encoding="utf-8"),
+            "Phone backup is not saved as an explicitly named raw H.264 file", errors)
     require("recordingSession.toggle(" in dji and "Kamera právě zpracovává" in dji,
             "Overlapping recording commands are not guarded", errors)
     require("recordingSession.isRecordingOrStarting()" in dji and "photoCommandPending" in dji,
@@ -48,6 +58,12 @@ def main() -> int:
             "Recording is not blocked when the aircraft microSD card is unavailable", errors)
     require("onCameraStorageState" in session and "onCameraStorageState" in ui,
             "Aircraft microSD status is not exposed in the UI", errors)
+    require("onCameraDiagnostics(String details)" in session
+            and "onCameraDiagnostics(String details)" in ui
+            and "postCameraDiagnostics" in dji
+            and "REC DJI CONFIRMED" in dji
+            and "REC DJI INTERRUPTED" in dji,
+            "Camera panel does not expose live start, confirmation and interruption diagnostics", errors)
     require("toggleRecording(Completion completion)" in demo,
             "Demo flavor does not implement the recording contract", errors)
 

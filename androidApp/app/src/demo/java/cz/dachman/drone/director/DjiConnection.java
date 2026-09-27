@@ -17,6 +17,9 @@ final class DjiConnection implements DroneSession {
             listener.onTelemetry(TelemetrySnapshot.disconnected());
             listener.onVideoState(false);
             listener.onCameraState(false);
+            listener.onCameraConnectionState(false);
+            listener.onCameraRecordingPending(false);
+            listener.onCameraDiagnostics("DEMO: kamera DJI není připojena; nahrávání nelze ověřit.");
             listener.onCameraStorageState(CameraStorageStatus.disconnected());
             listener.onCameraAutomationState(false, CameraDirector.MIN_DIGITAL_ZOOM);
             listener.onAircraftAction("ŽÁDNÁ", false);
