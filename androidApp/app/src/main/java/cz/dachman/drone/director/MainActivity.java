@@ -124,6 +124,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
     private boolean cameraAutomationActive;
     private boolean cameraRecording;
     private boolean cameraBackupActive;
+    private boolean cameraRecordingPending;
     private String cameraBackupDetail = "Záložní záznam telefonu není spuštěný.";
     private CameraStorageStatus cameraStorageStatus = CameraStorageStatus.disconnected();
     private ReturnHomeStatus returnHomeStatus = ReturnHomeStatus.missing(
@@ -1039,6 +1040,13 @@ public final class MainActivity extends Activity implements DroneSession.Listene
         });
     }
 
+    @Override public void onCameraRecordingPending(boolean pending) {
+        ui(() -> {
+            cameraRecordingPending = pending;
+            renderRecordingUi();
+        });
+    }
+
     @Override public void onCameraBackupState(boolean active, String detail) {
         ui(() -> {
             cameraBackupActive = active;
@@ -1114,11 +1122,12 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     private void renderRecordingUi() {
         boolean anyRecording = cameraRecording || cameraBackupActive;
-        boolean recordControlAvailable = anyRecording || cameraStorageStatus.ready;
-        recordButton.setEnabled(recordControlAvailable);
-        recordButton.setText(cameraRecording ? (cameraBackupActive ? "■ SD+TEL" : "■ STOP")
+        boolean recordControlAvailable = anyRecording || cameraRecordingPending || cameraStorageStatus.ready;
+        recordButton.setEnabled(recordControlAvailable && !cameraRecordingPending);
+        recordButton.setText(cameraRecordingPending ? "REC…"
+            : cameraRecording ? (cameraBackupActive ? "■ SD+TEL" : "■ STOP")
             : cameraBackupActive ? "■ TEL" : "● REC");
-        styleButton(recordButton, anyRecording ? ORANGE
+        styleButton(recordButton, cameraRecordingPending ? ORANGE : anyRecording ? ORANGE
             : cameraStorageStatus.ready ? RED : PANEL_LIGHT);
 
         cameraStorageBadge.setText(cameraStorageStatus.shortLabel);
@@ -1132,6 +1141,7 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     private void showCameraDiagnostics() {
         String message = "Kamera: " + (telemetry.connected ? "připojena" : "neověřena / odpojena")
+            + "\\nREC čeká na potvrzení: " + (cameraRecordingPending ? "ANO" : "NE")
             + "\\nCamera SystemState.isRecording: " + (cameraRecording ? "TRUE" : "FALSE")
             + "\\n" + cameraStorageStatus.detail
             + "\\nPhone backup: " + (cameraBackupActive ? "AKTIVNÍ" : "NEAKTIVNÍ")
