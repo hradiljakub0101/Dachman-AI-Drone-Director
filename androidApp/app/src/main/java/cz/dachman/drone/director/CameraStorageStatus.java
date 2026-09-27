@@ -70,7 +70,8 @@ public final class CameraStorageStatus {
 
     private static CameraStorageStatus blockedWithSpace(String label, String detail,
             int remainingSpaceMB) {
-        return blocked(label, detail + capacityDetail(remainingSpaceMB), remainingSpaceMB);
+        return new CameraStorageStatus(false, UNKNOWN_REMAINING_SECONDS, label,
+            detail + capacityDetail(remainingSpaceMB), remainingSpaceMB);
     }
 
     private static CameraStorageStatus blocked(String label, String detail) {
