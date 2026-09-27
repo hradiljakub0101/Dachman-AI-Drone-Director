@@ -15,6 +15,18 @@ public final class CameraStorageStatusTest {
         assertEquals("SD OK", status.shortLabel);
     }
 
+    @Test public void reportsCapacityInDiagnosticsForReadyAndFullCard() {
+        CameraStorageStatus ready = CameraStorageStatus.evaluate(
+            true, false, false, true, false, false, true, false, 1_825, 221_184);
+        assertTrue(ready.detail.contains("Volné místo: 216.0 GB"));
+
+        CameraStorageStatus full = CameraStorageStatus.evaluate(
+            true, false, false, true, false, true, true, false, 0, 128);
+        assertFalse(full.ready);
+        assertEquals(128, full.remainingSpaceMB);
+        assertTrue(full.detail.contains("Volné místo: 0.1 GB"));
+    }
+
     @Test public void missingCardBlocksRecording() {
         CameraStorageStatus status = CameraStorageStatus.evaluate(
             false, false, false, true, false, false, true, false, 600);
