@@ -198,6 +198,7 @@ final class DjiConnection implements DroneSession {
         postCamera(recordingSession.isRecording());
         postCameraRecordingPending(recordingStartPending);
         postCameraBackupState();
+        postCameraConnectionState();
         postCameraStorage();
         postCameraAutomation();
         postAction();
@@ -348,6 +349,7 @@ final class DjiConnection implements DroneSession {
         remoteController = aircraft.getRemoteController();
         battery = aircraft.getBattery();
         camera = aircraft.getCamera();
+        postCameraConnectionState();
         gimbal = aircraft.getGimbal();
         airLink = aircraft.getAirLink();
         digitalZoomSupported = camera != null && camera.isConnected()
@@ -1856,6 +1858,12 @@ final class DjiConnection implements DroneSession {
 
     private void postCamera(boolean isRecording) {
         main.post(() -> { if (!closed && listener != null) listener.onCameraState(isRecording); });
+    }
+
+    private void postCameraConnectionState() {
+        Camera current = camera;
+        boolean connected = current != null && current.isConnected();
+        main.post(() -> { if (!closed && listener != null) listener.onCameraConnectionState(connected); });
     }
 
     private void postCameraRecordingPending(boolean pending) {
