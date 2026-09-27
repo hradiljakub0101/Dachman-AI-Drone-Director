@@ -166,7 +166,9 @@ final class DjiConnection implements DroneSession {
 
     private final VideoFeeder.VideoDataListener videoDataListener = (bytes, size) -> {
         if (bytes == null || size <= 0) return;
+        boolean backupWasActive = phoneBackup.isRecording();
         phoneBackup.offer(bytes, size);
+        if (backupWasActive && !phoneBackup.isRecording()) postCameraBackupState();
         lastVideoPacketAt = SystemClock.elapsedRealtime();
         videoRestartAttempts = 0;
         DJICodecManager current = codec;
@@ -188,7 +190,7 @@ final class DjiConnection implements DroneSession {
         postVideo(active);
     };
 
-    DjiConnection(Activity activity) { this.activity = activity; this.phoneBackup = new PhoneH264Backup(activity); }
+    DjiConnection(Activity activity) { this.activity = activity; this.phoneBackup = new PhoneH264Backup(activity, this::postCameraBackupState); }
 
     @Override public void setListener(Listener listener) {
         this.listener = listener;
@@ -1430,7 +1432,7 @@ final class DjiConnection implements DroneSession {
             if (!videoActive) {
                 String failure = recordingFailureDiagnostic(current, "NEOVĚŘENÝ",
                     "NEPROVEDENO", "FALSE", cameraStorageStatus.detail)
-                    + "\\nPHONE BACKUP FAILED: chybí živý DJI video stream.";
+                    + "\nPHONE BACKUP FAILED: chybí živý DJI video stream.";
                 postStatus(failure);
                 postCompletion(completion, false, failure);
                 return;
@@ -1438,7 +1440,7 @@ final class DjiConnection implements DroneSession {
             if (!phoneBackup.start()) {
                 String failure = recordingFailureDiagnostic(current, "VIDEO_NORMAL",
                     "NEPROVEDENO", "FALSE", cameraStorageStatus.detail)
-                    + "\\nPHONE BACKUP FAILED: " + phoneBackup.lastError();
+                    + "\nPHONE BACKUP FAILED: " + phoneBackup.lastError();
                 postStatus(failure);
                 postCompletion(completion, false, failure);
                 return;
@@ -1549,11 +1551,11 @@ final class DjiConnection implements DroneSession {
     private String recordingFailureDiagnostic(Camera current, String mode, String startResult,
             String recordingState, String storageDetail) {
         String cameraState = current != null && current.isConnected() ? "připojena" : "odpojena";
-        return "REC DJI FAILED\\nKamera: " + cameraState
-            + "\\nRežim: " + mode
-            + "\\n" + storageDetail
-            + "\\nstartRecordVideo: " + startResult
-            + "\\nisRecording: " + recordingState;
+        return "REC DJI FAILED\nKamera: " + cameraState
+            + "\nRežim: " + mode
+            + "\n" + storageDetail
+            + "\nstartRecordVideo: " + startResult
+            + "\nisRecording: " + recordingState;
     }
 
     private interface RecordingModeResult {
@@ -1654,7 +1656,7 @@ final class DjiConnection implements DroneSession {
         postCameraRecordingPending(false);
         postCamera(false);
         String message = recordingFailureDiagnostic(camera, "VIDEO_NORMAL", "SUCCESS",
-            "FALSE", cameraStorageStatus.detail) + "\\nREC DJI FAILED: isRecording zůstalo FALSE.";
+            "FALSE", cameraStorageStatus.detail) + "\nREC DJI FAILED: isRecording zůstalo FALSE.";
         postStatus(message);
         if (phoneBackup.isRecording()) {
             postCameraBackupState();
@@ -1670,7 +1672,7 @@ final class DjiConnection implements DroneSession {
                 postCompletion(completion, false, "Kamera není připojena.");
                 return;
             }
-            if (recordingSession.isRecordingOrStarting()) {
+            if (recordingSession.isRecordingOrStarting() || phoneBackup.isRecording()) {
                 postCompletion(completion, false, "Nejprve zastav nahrávání videa.");
                 return;
             }
