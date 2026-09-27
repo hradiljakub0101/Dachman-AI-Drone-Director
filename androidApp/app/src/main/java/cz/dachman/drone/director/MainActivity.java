@@ -1141,11 +1141,11 @@ public final class MainActivity extends Activity implements DroneSession.Listene
 
     private void showCameraDiagnostics() {
         String message = "Kamera: " + (telemetry.connected ? "připojena" : "neověřena / odpojena")
-            + "\\nREC čeká na potvrzení: " + (cameraRecordingPending ? "ANO" : "NE")
-            + "\\nCamera SystemState.isRecording: " + (cameraRecording ? "TRUE" : "FALSE")
-            + "\\n" + cameraStorageStatus.detail
-            + "\\nPhone backup: " + (cameraBackupActive ? "AKTIVNÍ" : "NEAKTIVNÍ")
-            + "\\n" + cameraBackupDetail;
+            + "\nREC čeká na potvrzení: " + (cameraRecordingPending ? "ANO" : "NE")
+            + "\nCamera SystemState.isRecording: " + (cameraRecording ? "TRUE" : "FALSE")
+            + "\n" + cameraStorageStatus.detail
+            + "\nPhone backup: " + (cameraBackupActive ? "AKTIVNÍ" : "NEAKTIVNÍ")
+            + "\n" + cameraBackupDetail;
         new android.app.AlertDialog.Builder(this)
             .setTitle("DIAGNOSTIKA KAMERY A ÚLOŽIŠTĚ")
             .setMessage(message)
