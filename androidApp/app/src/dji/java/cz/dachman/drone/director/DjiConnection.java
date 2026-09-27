@@ -1101,8 +1101,8 @@ final class DjiConnection implements DroneSession {
             failReturnHomePreparation(completion, "Home Point nebo RTH výška se nepodařilo ověřit.");
             return;
         }
-        String message = recordingFailureDiagnostic(camera, "VIDEO_NORMAL", "SUCCESS",
-            "FALSE", cameraStorageStatus.detail) + "\\nREC DJI FAILED: isRecording zůstalo FALSE."; Mini 2 při bližším RTH zůstává viset. "
+        String message = "Home Point a RTH výška jsou ověřené v DJI. Návrat se ověřuje až za letu "
+            + "více než 20 m od Home; Mini 2 při bližším RTH zůstává viset. "
             + (warning == null || warning.isEmpty() ? returnHomeStatus.detail : warning);
         postCompletion(completion, true, message);
     }
@@ -1562,6 +1562,21 @@ final class DjiConnection implements DroneSession {
 
     private void settleCameraBeforeRecording(RecordingModeResult completion, String mode) {
         main.postDelayed(() -> completion.onResult(true, mode, null), 350L);
+    }
+
+    private void verifyRecordingStart(long verification) {
+        Completion waiting;
+        synchronized (this) {
+            if (verification != recordingVerificationRevision || pendingRecordingStart == null
+                    || !recordingSession.confirmationTimedOut()) return;
+            waiting = pendingRecordingStart;
+            pendingRecordingStart = null;
+        }
+        postCamera(false);
+        String message = recordingFailureDiagnostic(camera, "VIDEO_NORMAL", "SUCCESS",
+            "FALSE", cameraStorageStatus.detail) + "\\nREC DJI FAILED: isRecording zůstalo FALSE.";
+        postStatus(message);
+        postCompletion(waiting, false, message);
     }
 
     @Override public void takePhoto(Completion completion) {
